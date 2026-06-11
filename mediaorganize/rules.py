@@ -357,9 +357,37 @@ def extract_leading_absolute_episode(name: str) -> Optional[int]:
     return num if num >= 100 else None
 
 
+_RESOLUTION_LIKE_NUMBERS = {360, 480, 540, 576, 720, 1080, 1440, 2160, 4320}
+
+
+def find_standalone_absolute_episode(name: str, g_season, g_episode) -> Optional[int]:
+    """还原被 guessit 误拆成季集的中段绝对集数。"""
+    s = as_first_int(g_season)
+    e = as_first_int(g_episode)
+    if s is None or e is None:
+        return None
+    stem = (name or "").rsplit(".", 1)[0]
+    for ep_str in (f"{e:02d}", str(e)):
+        cand = f"{s}{ep_str}"
+        if not cand.isdigit() or len(cand) < 3 or len(cand) > 4:
+            continue
+        if cand.startswith("0"):
+            continue
+        num = int(cand)
+        if num in _RESOLUTION_LIKE_NUMBERS:
+            continue
+        if re.search(rf"(?<!\d){re.escape(cand)}(?!\d)", stem):
+            return num
+    return None
+
+
 def fix_guessit_absolute_episode_split(name: str, parsed: dict) -> dict:
-    """guessit 常把 1156 误判为 S11E56；此时优先采用开头的绝对集数。"""
+    """guessit 常把 1156 误判为 S11E56；此时优先采用绝对集数（开头或中段的连续数字）。"""
     abs_ep = extract_leading_absolute_episode(name)
+    if abs_ep is None:
+        abs_ep = find_standalone_absolute_episode(
+            name, (parsed or {}).get("season"), (parsed or {}).get("episode")
+        )
     if abs_ep is None:
         return parsed
     out = dict(parsed or {})
@@ -927,9 +955,26 @@ def find_tmdb_id_in_name(name: str) -> str:
     return ""
 
 
+_MARKER_OFF_VALUES = {"", "0", "off", "none", "no", "false"}
+
+
+def is_marker_off(marker: str) -> bool:
+    return (marker or "").strip().lower() in _MARKER_OFF_VALUES
+
+
+_ORGANIZED_STRUCTURE_RE = re.compile(
+    r"^.+?\s\((?:19|20)\d{2}\)(?:\s+S\d{1,3}E\d{1,4})?(?:\s+\[[^\]]*\])?\.[^.]+$"
+)
+
+
+def looks_like_organized_structure(filename: str) -> bool:
+    """判断文件名是否已是规范整理结构（关闭标识模式下用于快速跳过）。"""
+    return bool(_ORGANIZED_STRUCTURE_RE.match((filename or "").strip()))
+
+
 def is_already_organized(filename: str, marker: str) -> bool:
-    if not marker or not marker.strip():
-        return False
+    if is_marker_off(marker):
+        return looks_like_organized_structure(filename) or bool(find_tmdb_id_in_name(filename))
     m = marker.strip()
     if m in ("tmdb", "tmdbid"):
         return bool(find_tmdb_id_in_name(filename))
@@ -1267,9 +1312,11 @@ def build_target_filename(parsed: dict, marker: str = "", tmdb_id: str = "") -> 
         parts.append(f"({year})")
 
     tag = ""
-    if marker in ("tmdb", "tmdbid"):
+    if is_marker_off(marker):
+        tag = ""
+    elif marker in ("tmdb", "tmdbid"):
         tag = f"{{tmdb-{tmdb_id}}}" if tmdb_id else ""
-    elif marker and marker.strip() and marker not in ("tmdb", "tmdbid"):
+    elif marker.strip():
         tag = f"[{marker.strip()}]"
 
     if tag:

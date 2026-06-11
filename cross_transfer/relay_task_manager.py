@@ -1,5 +1,3 @@
-"""跨盘兜底中继任务管理器（内存队列，进程重启不持久化）。"""
-
 import asyncio
 import json
 import os
@@ -184,7 +182,6 @@ class RelayTaskManager:
 
             async def on_download(downloaded: int, total: int, message: str, speed: float):
                 total = int(total or task.total_bytes or 0)
-                # 下载与上传各自独立计 0-100，前端两段进度分别铺满，不再拼接
                 progress = int(downloaded / total * 100) if total else 0
                 await self._update(
                     task_id,

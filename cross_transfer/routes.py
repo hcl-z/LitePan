@@ -1,9 +1,3 @@
-"""由驱动能力矩阵推导可行的跨盘秒传线路（卡片）。
-
-线路可行性 = 源盘能提供某指纹（provide_hashes）且目标盘支持该指纹秒传（rapid_upload）。
-若正反方向均可行，则该线路为双向。
-"""
-
 from typing import Dict, List
 
 from core.registry import driver_registry
@@ -17,7 +11,6 @@ def _pan_meta(info: Dict) -> Dict:
         "name": info.get("display_name") or info.get("card_name") or info.get("name"),
         "logo": info.get("card_logo") or "",
         "color": info.get("card_color") or "",
-        # 上传冲突策略能力：默认支持改名+覆盖；不支持某项的驱动在 DRIVER_INFO 显式声明（如光鸭只会自动改名）
         "conflict_policies": list(info.get("upload_conflict_policies") or ["rename", "overwrite"]),
     }
 

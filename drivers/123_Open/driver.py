@@ -587,7 +587,6 @@ class Pan123OpenDriver(BaseDriver):
         resume_state: Optional[Dict[str, Any]] = None,
         state_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> OperationResult:
-        # 123Open 首版先保证上传链路完整；断点续传状态后续再扩展。
         return await self._upload_local_file_impl(
             local_path=local_path,
             file_name=file_name,

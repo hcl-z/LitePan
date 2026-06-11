@@ -1,13 +1,11 @@
 <template>
   <div class="index-page">
-    <!-- 文件操作加载遮罩 -->
     <div v-if="operationLoading" class="operation-loading-overlay">
       <div class="operation-loading-content">
         <div class="loading-spinner"></div>
         <div class="loading-text">{{ operationMessage }}</div>
       </div>
     </div>
-    <!-- 顶部导航 -->
     <div class="header">
       <div class="content-container-fluid">
         <div class="header-content">
@@ -35,7 +33,6 @@
       </div>
     </div>
 
-    <!-- 主内容区 -->
     <div class="main-content">
       <div class="content-container-fluid">
         <IndexTopNav
@@ -78,7 +75,6 @@
           </button>
         </div>
 
-      <!-- 工具栏和文件列表框架 -->
       <div class="main-frame">
         <FileToolbar
           :is-admin="isAdmin"
@@ -148,7 +144,6 @@
       </div>
     </div>
 
-    <!-- 页脚 -->
     <div class="footer">
       <div class="content-container-fluid">
         <p>
@@ -169,7 +164,6 @@
 
 
 
-    <!-- 消息通知容器 -->
     <div id="message-container"></div>
 
     <input
@@ -197,7 +191,6 @@
       :relay="relay"
     />
 
-    <!-- 全局加载遮罩 -->
     <div v-if="globalLoading" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner loading-large"></div>
@@ -230,7 +223,6 @@ const appVersion = APP_VERSION
 const route = useRoute()
 const router = useRouter()
 
-// 响应式数据
 const accounts = ref([])
 const selectedAccountId = ref(null)
 const selectedAccountName = ref('')
@@ -239,8 +231,8 @@ const dropdownOpen = ref(false)
 const files = ref([])
 const loading = ref(false)
 const globalLoading = ref(false)
-const operationLoading = ref(false)  // 文件操作加载状态
-const operationMessage = ref('正在处理文件操作...')  // 操作提示信息
+const operationLoading = ref(false)
+const operationMessage = ref('正在处理文件操作...')
 const uploadFileInput = ref(null)
 const uploadFolderInput = ref(null)
 const relay = useCrossRelayTasks()
@@ -254,7 +246,6 @@ const accountSwitchMode = ref('dropdown')
 
 
 
-// 操作提示信息映射
 const operationMessages = {
   create_folder: '正在创建文件夹...',
   delete_file: '正在删除文件...',
@@ -271,7 +262,6 @@ const operationMessages = {
   copy_folder: '正在复制文件夹...'
 }
 
-// 统一的操作加载管理
 const setOperationLoading = (isLoading, operationType = null, customMessage = null, itemName = null) => {
   operationLoading.value = isLoading
   if (isLoading) {
@@ -279,7 +269,6 @@ const setOperationLoading = (isLoading, operationType = null, customMessage = nu
       operationMessage.value = customMessage
     } else if (operationType && operationMessages[operationType]) {
       let message = operationMessages[operationType]
-      // 如果提供了项目名称，追加到提示信息中
       if (itemName) {
         message = message.replace('...', ` "${itemName}"...`)
       }
@@ -309,14 +298,11 @@ const previewFiles = ref([])
 const previewIndex = ref(0)
 const FILE_VIEW_MODE_STORAGE_KEY = 'litepan:index:file-view-mode'
 
-// 计算属性
 const activeAccounts = computed(() => {
-  // 只显示启用的账号，兼容 SQLite 的 0/1 和接口序列化后的布尔值。
   return accounts.value.filter(account => account.is_active === 1 || account.is_active === true || account.enabled === 1 || account.enabled === true)
 })
 
 const firstActiveAccount = computed(() => {
-  // 获取第一个启用账号（后端已排序，默认账号通常在第一位）
   return activeAccounts.value[0] || null
 })
 
@@ -402,9 +388,7 @@ const getCurrentDisplayPath = () => {
 }
 
 
-// 自然排序函数，处理包含数字的文件名
 const naturalSort = (a, b) => {
-  // 将字符串拆分为数字和非数字部分
   const splitA = String(a).match(/(\d+|\D+)/g) || []
   const splitB = String(b).match(/(\d+|\D+)/g) || []
   
@@ -414,7 +398,6 @@ const naturalSort = (a, b) => {
     const partA = splitA[i] || ''
     const partB = splitB[i] || ''
     
-    // 如果两个部分都是数字，按数字大小比较
     if (/^\d+$/.test(partA) && /^\d+$/.test(partB)) {
       const numA = parseInt(partA, 10)
       const numB = parseInt(partB, 10)
@@ -422,7 +405,6 @@ const naturalSort = (a, b) => {
         return numA - numB
       }
     } else {
-      // 否则按字符串比较
       const comparison = partA.toLowerCase().localeCompare(partB.toLowerCase(), 'zh-CN')
       if (comparison !== 0) {
         return comparison
@@ -435,7 +417,6 @@ const naturalSort = (a, b) => {
 
 const sortedFiles = computed(() => {
   const sorted = [...files.value].sort((a, b) => {
-    // 文件夹优先
     if (a.is_dir && !b.is_dir) return -1
     if (!a.is_dir && b.is_dir) return 1
     
@@ -449,12 +430,10 @@ const sortedFiles = computed(() => {
       aVal = new Date(a.modified || 0)
       bVal = new Date(b.modified || 0)
     } else {
-      // 名称排序使用自然排序
       if (sortKey.value === 'name') {
         const result = naturalSort(aVal || '', bVal || '')
         return sortOrder.value === 'asc' ? result : -result
       }
-      // 其他字段使用普通字符串比较
       aVal = String(aVal || '').toLowerCase()
       bVal = String(bVal || '').toLowerCase()
     }
@@ -466,12 +445,10 @@ const sortedFiles = computed(() => {
   return sorted
 })
 
-// 监听选中文件列表变化
 watch(selectedFilesList, (newVal) => {
   selectedFiles.value = new Set(newVal)
 }, { deep: true })
 
-// 方法
 const toggleDropdown = () => {
   dropdownOpen.value = !dropdownOpen.value
 }
@@ -489,15 +466,12 @@ const getFloatingAccountColor = (account) => {
   return account?.driver_card_color || '#6366f1'
 }
 
-// 获取账号的根目录 ID
 const getRootId = (config) => {
-  // 所有实际驱动都使用 root_folder_id 字段
   const rootId = config.root_folder_id || '0'
   return rootId
 }
 
 const selectAccount = async (account) => {
-  // 保存当前状态，用于失败时回滚
   const previousAccountId = selectedAccountId.value
   const previousAccountName = selectedAccountName.value
   const previousPath = currentPath.value
@@ -507,7 +481,6 @@ const selectAccount = async (account) => {
     selectedAccountId.value = account.id
     selectedAccountName.value = account.name
     
-    // 获取账号的根目录 ID
     const config = account.config || {}
     const rootId = getRootId(config)
     currentPath.value = rootId
@@ -520,7 +493,6 @@ const selectAccount = async (account) => {
   }
   dropdownOpen.value = false
   
-  // 清除选中项（切换账号时）
   selectedFilesList.value = []
   
   if (selectedAccountId.value) {
@@ -528,12 +500,10 @@ const selectAccount = async (account) => {
       await loadFiles()
     } catch (error) {
       console.error('账号切换失败，开始回滚状态:', error)
-      // 回滚到上一个状态
       selectedAccountId.value = previousAccountId
       selectedAccountName.value = previousAccountName
       currentPath.value = previousPath
       breadcrumbItems.value = previousBreadcrumb
-      // 显示错误提示
       window.appNotification.error('账号切换失败，请检查账号状态')
     }
   } else {
@@ -547,7 +517,6 @@ const loadAccounts = async () => {
     if (response.data.success) {
       accounts.value = response.data.data || []
       
-      // 使用 nextTick 确保计算属性已更新，再自动选择第一个启用账号
       await nextTick()
       if (!selectedAccountId.value && firstActiveAccount.value) {
         selectAccount(firstActiveAccount.value)
@@ -572,7 +541,6 @@ const loadPublicSystemConfig = async () => {
   }
 }
 
-// 监听账号列表变化，当账号列表更新时重新选择默认账号
 watch(accounts, (newAccounts) => {
   if (newAccounts.length > 0 && !selectedAccountId.value) {
     const defaultAccount = newAccounts.find(acc => acc.is_default && (acc.is_active === 1 || acc.is_active === true || acc.enabled === 1 || acc.enabled === true))
@@ -594,7 +562,6 @@ const loadFiles = async (forceRefresh = false) => {
       path: currentPath.value
     }
     
-    // 如果需要强制刷新，添加参数
     if (forceRefresh) {
       params.force_refresh = true
     }
@@ -607,7 +574,6 @@ const loadFiles = async (forceRefresh = false) => {
       responseTime.value = `${endTime - startTime}ms`
       await applyCachedFolderSizes(selectedAccountId.value, currentPath.value)
       
-      // 获取缓存命中率（异步，不阻塞文件列表显示）
       setTimeout(async () => {
         try {
           const hitRateResponse = await axios.get('/api/public/cache/hit-rate')
@@ -619,14 +585,12 @@ const loadFiles = async (forceRefresh = false) => {
         } catch (hitRateError) {
           cacheRate.value = '-'
         }
-      }, 0) // 使用 setTimeout 让命中率获取不阻塞主流程
+      }, 0)
     } else {
-      // 抛出错误，让调用方处理
       throw new Error(response.data.message || '获取文件列表失败')
     }
   } catch (error) {
     console.error('获取文件列表失败:', error)
-    // 重新抛出错误，让调用方处理
     throw error
   } finally {
     loading.value = false
@@ -821,33 +785,27 @@ const showNextPreview = () => {
 }
 
 
-// 文件夹导航防抖
 let folderNavigateTimer = null
 const navigateToFolder = (folder) => {
-  // 如果正在加载中，忽略点击
   if (loading.value) {
     return
   }
   
-  // 如果点击的是当前路径，忽略
   if (folder.id === currentPath.value) {
     return
   }
   
-  // 检查是否已经存在相同路径 ID，避免重复添加
   const existingIndex = breadcrumbItems.value.findIndex(item => item.path === folder.id)
   if (existingIndex !== -1) {
     navigateToPath(folder.id)
     return
   }
   
-  // 防抖，避免快速重复点击
   if (folderNavigateTimer) {
     clearTimeout(folderNavigateTimer)
   }
   
   folderNavigateTimer = setTimeout(async () => {
-    // 再次检查是否正在加载
     if (loading.value) {
       return
     }
@@ -860,16 +818,13 @@ const navigateToFolder = (folder) => {
 
     currentPath.value = folder.id
 
-    // 更新面包屑，添加新的文件夹路径
     breadcrumbItems.value.push({
       name: folder.name,
       path: folder.id
     })
 
-    // 立即同步更新 maxBreadcrumbItems，避免闪烁
     updateBreadcrumbLayoutSync()
 
-    // 清除选中项（切换目录时）
     selectedFilesList.value = []
 
     try {
@@ -881,26 +836,22 @@ const navigateToFolder = (folder) => {
       updateBreadcrumbLayoutSync()
       window.appNotification.error(error?.message || '目录打开失败，路径已恢复')
     }
-  }, 50) // 50ms 防抖，提升响应速度
+  }, 50)
 }
 
-// 面包屑导航防抖
 let navigateTimer = null
 const navigateToPath = (path) => {
-  // 如果正在加载中，忽略点击
   if (loading.value) {
     return
   }
   
   if (path === currentPath.value) return
 
-  // 防抖，避免快速重复点击
   if (navigateTimer) {
     clearTimeout(navigateTimer)
   }
 
   navigateTimer = setTimeout(async () => {
-    // 再次检查是否正在加载
     if (loading.value) {
       return
     }
@@ -911,10 +862,8 @@ const navigateToPath = (path) => {
 
     currentPath.value = path
 
-    // 更新面包屑，找到对应路径索引并删除后面的项目
     const targetIndex = breadcrumbItems.value.findIndex(item => item.path === path)
     if (targetIndex !== -1) {
-      // 确保面包屑长度正确，删除目标位置之后的所有项目
       const newLength = targetIndex + 1
       if (breadcrumbItems.value.length > newLength) {
         breadcrumbItems.value.splice(newLength)
@@ -923,10 +872,8 @@ const navigateToPath = (path) => {
       console.warn('面包屑中未找到目标路径:', path)
     }
 
-    // 立即同步更新 maxBreadcrumbItems，避免闪烁
     updateBreadcrumbLayoutSync()
 
-    // 清除选中项（切换目录时）
     selectedFilesList.value = []
 
     try {
@@ -938,77 +885,62 @@ const navigateToPath = (path) => {
       updateBreadcrumbLayoutSync()
       window.appNotification.error(error?.message || '目录打开失败，路径已恢复')
     }
-  }, 50) // 50ms 防抖，提升响应速度
+  }, 50)
 }
 
-// 隐藏的面包屑项目（用于下拉菜单）
 const hiddenBreadcrumbItems = computed(() => {
   if (breadcrumbItems.value.length <= maxBreadcrumbItems.value) {
     return []
   }
 
-  // 简化逻辑：显示第一个 + ... + 最后若干项
-  // 确保总显示数量等于 maxBreadcrumbItems
-  const lastItemsCount = maxBreadcrumbItems.value - 2 // 减去第一个和 "..."
+  const lastItemsCount = maxBreadcrumbItems.value - 2
 
-  // 返回中间被隐藏的项目
   return breadcrumbItems.value.slice(1, breadcrumbItems.value.length - lastItemsCount)
 })
 
-// 可见的最后几个项目
 const visibleLastItems = computed(() => {
   if (breadcrumbItems.value.length <= maxBreadcrumbItems.value) {
     return []
   }
 
-  // 简化逻辑：显示最后若干项目
-  // 确保总显示数量等于 maxBreadcrumbItems
-  const lastItemsCount = maxBreadcrumbItems.value - 2 // 减去第一个和 "..."
+  const lastItemsCount = maxBreadcrumbItems.value - 2
 
-  // 返回最后几个项目
   return breadcrumbItems.value.slice(-lastItemsCount)
 })
 
-// 同步更新面包屑布局（无防抖，立即执行）
 const updateBreadcrumbLayoutSync = () => {
   const screenWidth = window.innerWidth
   const itemCount = breadcrumbItems.value.length
 
-  // 根据屏幕宽度设定开始收缩的阈值
   let startCollapseThreshold
   if (screenWidth >= 1400) {
-    startCollapseThreshold = 7   // 超大屏超过 7 个开始收缩
+    startCollapseThreshold = 7
   } else if (screenWidth >= 1200) {
-    startCollapseThreshold = 6   // 大屏超过 6 个开始收缩
+    startCollapseThreshold = 6
   } else if (screenWidth >= 1000) {
-    startCollapseThreshold = 5   // 中屏超过 5 个开始收缩
+    startCollapseThreshold = 5
   } else if (screenWidth >= 800) {
-    startCollapseThreshold = 4   // 小屏超过 4 个开始收缩
+    startCollapseThreshold = 4
   } else {
-    startCollapseThreshold = 3   // 窄屏超过 3 个开始收缩
+    startCollapseThreshold = 3
   }
 
-  // 渐进式收缩：保持固定显示数量，逐步隐藏中间项目
   if (itemCount <= startCollapseThreshold) {
-    // 未达到收缩阈值，显示全部
     maxBreadcrumbItems.value = itemCount
   } else {
-    // 达到收缩阈值后，保持固定显示数量
     maxBreadcrumbItems.value = startCollapseThreshold + 1
   }
 }
 
-// 渐进式面包屑布局策略（带防抖，用于窗口大小变化）
 let updateBreadcrumbLayoutTimer = null
 const updateBreadcrumbLayout = () => {
-  // 防抖，避免频繁调用
   if (updateBreadcrumbLayoutTimer) {
     clearTimeout(updateBreadcrumbLayoutTimer)
   }
 
   updateBreadcrumbLayoutTimer = setTimeout(() => {
     updateBreadcrumbLayoutSync()
-  }, 50) // 缩短防抖时间，提升响应速度
+  }, 50)
 }
 
 const sortBy = (key, order = null) => {
@@ -1111,11 +1043,9 @@ const handleLogout = async () => {
     const response = await axios.post('/api/auth/logout')
     if (response.data.success) {
       window.appNotification.success('退出登录成功')
-      // 更新状态
       isAdmin.value = false
       mustChangePassword.value = false
       document.body.classList.remove('admin-mode')
-      // 重新检查认证状态
       checkAuthStatus()
     } else {
       window.appNotification.error('退出登录失败')
@@ -1126,7 +1056,6 @@ const handleLogout = async () => {
   }
 }
 
-// 检查管理员状态
 const checkAuthStatus = async () => {
   try {
     const response = await axios.get('/api/auth/status')
@@ -1136,7 +1065,6 @@ const checkAuthStatus = async () => {
       mustChangePassword.value = Boolean(authData.must_change_password)
       isAdmin.value = Boolean(authData.is_admin) && !mustChangePassword.value
       
-      // 根据管理员状态添加或移除 body 类
       if (isAdmin.value) {
         document.body.classList.add('admin-mode')
       } else {
@@ -1162,7 +1090,6 @@ const checkAuthStatus = async () => {
   return true
 }
 
-// 点击外部关闭下拉菜单
 const handleClickOutside = (event) => {
   if (!event.target.closest('.custom-select')) {
     dropdownOpen.value = false
@@ -1187,13 +1114,10 @@ const handleViewModeChange = (nextMode) => {
   try {
     localStorage.setItem(FILE_VIEW_MODE_STORAGE_KEY, nextMode)
   } catch {
-    // 本地存储不可用时静默降级
   }
 }
 
-// 监听面包屑变化（导航函数中已同步更新，这里主要兜底）
 watch(breadcrumbItems, () => {
-  // 使用防抖版本，避免重复更新
   updateBreadcrumbLayout()
 }, { deep: true })
 
@@ -1226,12 +1150,10 @@ onMounted(() => {
   })
   document.addEventListener('click', handleClickOutside)
 
-  // 初始化面包屑布局
   nextTick(() => {
     updateBreadcrumbLayout()
   })
 
-  // 监听窗口大小变化
   window.addEventListener('resize', updateBreadcrumbLayout)
 })
 
@@ -1239,7 +1161,6 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateBreadcrumbLayout)
   document.removeEventListener('click', handleClickOutside)
   
-  // 清理定时器
   if (navigateTimer) {
     clearTimeout(navigateTimer)
   }
@@ -1251,7 +1172,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 页面作用域样式，仅补充当前页面所需样式 */
 
 .index-page {
   min-height: 100vh;
@@ -1415,7 +1335,6 @@ onUnmounted(() => {
   }
 }
 
-/* 当 body 带 admin-mode 类时显示管理员功能 */
 :global(body.admin-mode) .admin-only {
   display: table-cell !important;
 }
@@ -1467,7 +1386,6 @@ onUnmounted(() => {
   background-color: #f0f0f0;
 }
 
-/* 移除选中账号的蓝色样式 */
 
 
 
@@ -1508,7 +1426,6 @@ onUnmounted(() => {
   100% { transform: rotate(360deg); }
 }
 
-/* 移动弹窗居中加载动画 */
 :global(.loading-center) {
   display: flex !important;
   flex-direction: column !important;
@@ -1549,7 +1466,6 @@ onUnmounted(() => {
   100% { transform: rotate(360deg); }
 }
 
-/* 面包屑下拉菜单样式，使用全局样式确保动态 HTML 也能应用 */
 :global(.breadcrumb-ellipsis-dropdown) {
   position: relative !important;
   display: inline-block !important;
@@ -1618,7 +1534,6 @@ onUnmounted(() => {
   white-space: nowrap !important;
 }
 
-/* 恢复备份9验证通过的首页/目录选择器滚动条样式 */
 :global(*::-webkit-scrollbar) {
   width: 6px !important;
   height: 6px !important;
@@ -1795,7 +1710,6 @@ onUnmounted(() => {
 }
 
 
-/* 管理员标识 */
 .admin-indicator {
   background: #10b981;
   color: white;
@@ -1804,7 +1718,6 @@ onUnmounted(() => {
   font-size: 10px;
   font-weight: 400;
   letter-spacing: 0.5px;
-  /* 定位在 logo 右上角 */
   position: absolute;
   top: 2px;
   right: -4px;
@@ -1824,7 +1737,6 @@ onUnmounted(() => {
   background: #f59e0b;
 }
 
-/* 退出登录按钮样式 */
 .btn-logout {
   background: #ef4444 !important;
   color: #fff !important;
@@ -1850,6 +1762,5 @@ onUnmounted(() => {
   line-height: 1;
 }
 
-/* 退出按钮不需要 hover 效果 */
 
 </style> 

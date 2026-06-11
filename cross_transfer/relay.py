@@ -1,5 +1,3 @@
-"""跨盘兜底中继：从源盘下载到临时文件，再上传到目标盘。"""
-
 import asyncio
 import os
 import time

@@ -425,6 +425,7 @@ class Planner:
         if not self.parent_id:
             return self._finalize()
 
+        await self._clear_dir_cache()
         await self._scan_and_plan(self.parent_id)
         self._try_whole_dir_move_optimization()
         self._detect_same_work_dir_conflicts()
@@ -482,10 +483,7 @@ class Planner:
                 self.skipped_items.append({
                     "file_id": str(losing.source_id),
                     "file_name": losing.source_name,
-                    "reason": (
-                        f"已合并到「{target_name}」；本目录内文件已自动搬入该目录，"
-                        f"空目录会随后被自动清理"
-                    ),
+                    "reason": f"已合并到「{target_name}」（同一部作品，文件已自动并入，空目录将清理）",
                 })
                 self.log(
                     f"[计划] 同作品合并：「{losing.source_name}」内文件自动并入"
@@ -644,14 +642,7 @@ class Planner:
         if self.action_type not in ("move", "rename"):
             return
 
-        # 收集所有"清理链起点"
-        # - relocate 的 source_parent → 它本身需要清
-        # - move_and_rename_dir 的 source 的原父 → 它本身可能变空（其子目录被整体搬走）
-        #
-        # 注意：以前会跳过 move_and_rename_dir 自身的 source_id，但实际上 executor 在
-        # 「目标已存在同名」时会降级为复用现有目录，源 dir 不会被整体搬走，里面文件被
-        # 一个个搬走后该 dir 也会变空。所以这里**对所有 source dir 都生成 delete_empty_dir**，
-        # 让 executor 的 list-and-skip 安全机制决定是否真删（非空就跳过）。
+        # 先扩大候选清理目录，最终是否删除由 executor 的空目录校验兜底。
         dir_relocate_sources: Set[str] = {
             str(action.source_id or "")
             for action in self.actions
@@ -659,6 +650,7 @@ class Planner:
             and isinstance(action.metadata, dict)
             and action.metadata.get("kind_label") in ("dir_rename", "season_dir_rename")
             and action.source_id
+            and action.status != "skipped"
         }
         starts: Set[str] = set()
         stop_at: Dict[str, str] = {}
@@ -810,6 +802,23 @@ class Planner:
             })
         except Exception:
             pass
+
+    async def _clear_dir_cache(self):
+        try:
+            cache_manager = getattr(self.driver, "_cache_manager", None)
+            if not cache_manager:
+                return
+            account_id = str(
+                getattr(self.driver, "account_id", None)
+                or getattr(self.driver, "_account_id", None)
+                or ""
+            )
+            if not account_id:
+                return
+            await cache_manager.clear_by_prefix(f"dir:{account_id}:")
+            self.log("[计划] 已清理目录缓存，确保按最新目录结构扫描")
+        except Exception as e:
+            self.log(f"[计划] 清理目录缓存失败（忽略，按现有缓存继续）: {e}")
 
     async def _list_with_retry(self, dir_id: str):
         self.check_stop()
@@ -1099,6 +1108,7 @@ class Planner:
     async def _plan_group(self, group_key: Tuple, items: list, align_defaults: Dict[Tuple, Dict[str, Any]]):
         media_kind, dir_id, dir_name, title, year, season, episode = group_key
         is_tv = media_kind == "tv"
+        group_uid = "|".join(str(x) for x in group_key)
 
         if not title:
             for file_item, _, _, _, _ in items:
@@ -1156,11 +1166,12 @@ class Planner:
             if season is None:
                 season = inferred_season
 
-        folder_info = {"title": tmdb_title or title, "year": year}
+        short_title = tmdb_title or title
+        folder_info = {"title": short_title, "year": year}
         new_folder_name = rules.sanitize_filename(rules.build_folder_name(folder_info, tmdb_id))
         display_title = rules.build_display_title(tmdb_title, tmdb_original, title)
 
-        group_dir_meta: Dict[str, Any] = {}
+        group_dir_meta: Dict[str, Any] = {"group_uid": group_uid}
         if dir_name and new_folder_name and not rules.is_same_generated_name(dir_name, new_folder_name):
             group_dir_meta["group_old_dir_name"] = dir_name
             group_dir_meta["group_new_dir_name"] = new_folder_name
@@ -1235,6 +1246,7 @@ class Planner:
                         "tmdb_id": tmdb_id,
                         "media_kind": media_kind,
                         "kind_label": "dir_rename",
+                        "group_uid": group_uid,
                         "promoted_from_tv_tree": bool(needs_promote),
                     },
                 ))
@@ -1285,6 +1297,8 @@ class Planner:
                     tmdb_id,
                     season_dir_rename_cache,
                 )
+                if season_dir_rename_action is not None:
+                    season_dir_rename_action.metadata["group_uid"] = group_uid
 
             # 兜底：剧集 group 里某个文件没解析出集数（也没 special label）→ 跳过该文件
             # 避免被错误地塞进剧集 group 后生成无意义新名（甚至导致同名冲突）
@@ -1320,7 +1334,7 @@ class Planner:
                 continue
             new_base = rules.sanitize_filename(base)
             special_label = file_parsed.get("_special_label")
-            if special_label:
+            if special_label and special_label not in (display_title or ""):
                 new_base = f"{new_base} {special_label}"
             part_label = file_parsed.get("_part_label")
             if part_label:
@@ -1330,15 +1344,12 @@ class Planner:
             else:
                 new_filename = f"{new_base}.{ext}" if ext else new_base
             new_filename = rules.fit_filename_bytes(new_filename, self.tmdb_lang)
-            # 元数据 base：跟最终生成的媒体文件名严格保持一致（去掉扩展名），
-            # 这样 Emby/Jellyfin 才能按 basename 匹配 nfo / poster / fanart / srt
             new_meta_base = new_filename[: -(len(ext) + 1)] if ext and new_filename.lower().endswith("." + ext.lower()) else new_filename
 
             if self.action_type == "rename":
                 if rules.is_same_generated_name(file_item.name, new_filename):
                     self._skip(file_item, "已是目标名")
                     continue
-                # rename 模式：检测散落文件（直接放在 generic dir 或扫描根下，没有专属作品目录）
                 src_dir_name = self.scanned_dir_names.get(str(source_dir_id), "")
                 is_scattered = (
                     str(source_dir_id) == str(self.parent_id)
@@ -1347,10 +1358,8 @@ class Planner:
                 rename_target_parent = str(source_dir_id)
                 rename_deps: List[str] = []
                 if is_scattered:
-                    # 散落：在源父目录下建作品子目录，把文件归进去
                     sub_work_ref = self._ensure_dir_action(str(source_dir_id), new_folder_name)
                     if is_tv:
-                        # 剧集再建 Season 子目录
                         sub_season_ref, season_deps = self._resolve_target_parent_for_move(
                             sub_work_ref, is_tv, current_season, season_dir_cache
                         )
@@ -1361,7 +1370,6 @@ class Planner:
                         if sub_work_ref.startswith("ref:"):
                             rename_deps = [sub_work_ref[4:]]
                 elif media_kind == "movie" and promoted_movie_parent:
-                    # 电影文件夹整体移出由 dir relocate 负责；文件仅改名并留在该文件夹内
                     rename_target_parent = str(dir_id or source_dir_id)
                 action = PlanAction(
                     id=self._next_id(),
@@ -1374,7 +1382,7 @@ class Planner:
                     reason=self._build_reason(group_key, tmdb_id, display_title, current_season, current_episode, rename_only=True),
                     confidence=tmdb_info.get("confidence", 0.6 if tmdb_id else 0.4),
                     depends_on=rename_deps,
-                    metadata={"tmdb_id": tmdb_id, "media_kind": media_kind, "season": current_season, "episode": current_episode, **group_dir_meta},
+                    metadata={"tmdb_id": tmdb_id, "media_kind": media_kind, "title": short_title, "mode": "rename", "season": current_season, "episode": current_episode, **group_dir_meta},
                 )
                 self._add(action)
                 if season_dir_rename_action:
@@ -1402,7 +1410,7 @@ class Planner:
                 reason=self._build_reason(group_key, tmdb_id, display_title, current_season, current_episode, rename_only=False),
                 confidence=tmdb_info.get("confidence", 0.6 if tmdb_id else 0.4),
                 depends_on=list(deps),
-                metadata={"tmdb_id": tmdb_id, "media_kind": media_kind, "season": current_season, "episode": current_episode, **group_dir_meta},
+                metadata={"tmdb_id": tmdb_id, "media_kind": media_kind, "title": short_title, "mode": "move", "season": current_season, "episode": current_episode, **group_dir_meta},
             )
             self._add(action)
             self._plan_meta_followers(file_item, source_dir_id, new_meta_base, ext, action.id)

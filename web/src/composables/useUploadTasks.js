@@ -7,8 +7,6 @@ import BatchUploadTaskDeleteDialog from '../components/index/BatchUploadTaskDele
 
 const UPLOAD_NOTICE_STORAGE_KEY = 'litepan:index:upload-server-transfer-notice-hidden'
 
-// 上传任务子系统：本机→服务器分发、服务器→网盘调度、SSE/轮询、任务面板编排。
-// 依赖经 deps 注入，保持首页为账号/路径/文件列表的唯一数据源。
 export function useUploadTasks(deps) {
   const {
     selectedAccountId,
@@ -298,7 +296,6 @@ const getUploadTaskMessage = (task) => {
   return task.message || '-'
 }
 
-// 各驱动上传消息统一含“分片（x/y）”，运行中时单独提取展示；无分片信息返回空
 const formatUploadPart = (task) => {
   if (String(task?.status || '') !== 'running') return ''
   const m = String(task?.message || '').match(/分片[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/)
@@ -483,7 +480,6 @@ const shouldShowUploadTaskProgressBar = (task) => {
   return !['pending', 'canceled', 'success', 'skipped'].includes(status) && hasStartedUploadTask(task)
 }
 
-// 本机→服务器(pending)与服务器→网盘(running)都显示百分比；发丝条仅后者
 const shouldShowUploadTaskMetaPercent = (task) => {
   const status = String(task?.status || '')
   if (['canceled', 'success', 'skipped'].includes(status)) return false
@@ -495,7 +491,6 @@ const shouldShowUploadTaskHairline = (task) => String(task?.status || '') === 'r
 
 const isUploadTaskActive = (task) => ['pending', 'running', 'paused'].includes(String(task?.status || ''))
 
-// 第二行相位胶囊文案：本机→服务器、服务器→网盘、暂停等
 const getUploadTaskPhaseLabel = (task) => {
   const status = String(task?.status || '')
   if (status === 'paused') return '已暂停'
@@ -522,7 +517,6 @@ const shouldShowRelayTaskHairline = (task) => {
 
 const isRelayTaskActive = (task) => !['success', 'failed', 'canceled'].includes(String(task?.status || ''))
 
-// 第二行相位胶囊文案：源盘下载中 / 目标盘上传中
 const getRelayPhaseLabel = (task) => {
   if (task?.phase === 'downloading') return '源盘下载中'
   if (task?.phase === 'uploading') return '目标盘上传中'
@@ -541,7 +535,6 @@ const markUploadNoticeSkipped = () => {
   try {
     localStorage.setItem(UPLOAD_NOTICE_STORAGE_KEY, 'true')
   } catch {
-    // 本地存储不可用时静默降级
   }
 }
 
@@ -549,7 +542,6 @@ const clearUploadNoticeSkipped = () => {
   try {
     localStorage.removeItem(UPLOAD_NOTICE_STORAGE_KEY)
   } catch {
-    // 本地存储不可用时静默降级
   }
 }
 

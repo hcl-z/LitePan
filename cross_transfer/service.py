@@ -1,5 +1,3 @@
-"""跨盘秒传服务：扫描源指纹、试探可秒传（流式）、执行秒传。"""
-
 import asyncio
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -215,7 +213,6 @@ async def probe_stream(
                 ok += 1
             else:
                 no += 1
-            # probe_error 区分“目标盘报错（如上传流量超限）”与“正常未命中”，供前端提示
             yield {"event": "item", "rel_path": rel_path, "reuse": reuse, "hash": file_hash, "error": probe_error}
 
         yield {"event": "end", "ok": ok, "no": no}
@@ -414,8 +411,7 @@ async def execute_stream(
             relay_queued += 1
         yield {"event": "item", **item}
 
-    # 未开兜底时，未命中文件不会写入目标，清理本次新建却仍为空的目录（深层优先）。
-    # 开了兜底时不清理：未命中会异步中转落地，目录稍后会被填充。
+    # 未开兜底时清理本次创建且仍为空的目录。
     if not fallback and dir_cache_created:
         for folder_id in reversed(dir_cache_created):
             try:

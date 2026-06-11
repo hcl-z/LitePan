@@ -201,7 +201,7 @@ async def create_task(payload: TaskCreate, session_data: dict = Depends(require_
     if payload.action_type == "move" and not (payload.target_root or "").strip():
         return error_response(message="move 模式下目标根目录不能为空")
     if payload.action_type == "rename" and not (payload.rename_marker or "").strip():
-        return error_response(message="原地重命名必须设置标识（tmdb 或自定义），已整理文件靠标识判断跳过")
+        return error_response(message="原地重命名必须设置标识：tmdb / 自定义 / off（不写入文件名，靠规范结构判断跳过）")
 
     config = _normalize_config({
         "task_name": payload.task_name.strip(),
@@ -266,7 +266,7 @@ async def update_task(task_id: str, payload: TaskUpdate, session_data: dict = De
 
     if (existing_config.get("action_type") or "").lower() == "rename" \
             and not (str(existing_config.get("rename_marker") or "").strip()):
-        return error_response(message="原地重命名必须设置标识（tmdb 或自定义），已整理文件靠标识判断跳过")
+        return error_response(message="原地重命名必须设置标识：tmdb / 自定义 / off（不写入文件名，靠规范结构判断跳过）")
     if (existing_config.get("action_type") or "").lower() == "move" \
             and not (str(existing_config.get("target_root") or "").strip()):
         return error_response(message="move 模式下目标根目录不能为空")

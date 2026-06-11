@@ -148,7 +148,7 @@ async def _build_plan_for_task(task_id: str, task_row: Dict[str, Any], settings:
         raise Exception("任务未配置账号")
     action_type = (cfg.get("action_type") or "move").lower()
     if action_type == "rename" and not str(cfg.get("rename_marker") or "").strip():
-        raise Exception("原地重命名必须设置标识（tmdb 或自定义），请先在任务配置中填写「整理标识」")
+        raise Exception("原地重命名必须设置标识：tmdb / 自定义 / off（不写入文件名），请先在任务配置中填写「整理标识」")
     if action_type == "move" and not str(cfg.get("target_root") or "").strip():
         raise Exception("move 模式下目标根目录不能为空，请先在任务配置中填写")
     driver = await get_account_driver_instance(int(cfg["account_id"]))

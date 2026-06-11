@@ -645,7 +645,6 @@
           </div>
         </div>
 
-      <!-- 新建/编辑弹窗 -->
       <div v-if="organizeShowDialog" class="dialog-overlay">
         <div class="dialog" @click.stop>
           <div class="dialog-header">
@@ -694,11 +693,24 @@
             </div>
             <div class="form-row" v-else>
               <div class="form-group">
-                <label>
+                <label class="with-help">
                   整理标识
-                  <span class="label-hint">必填，可自定义（如 v2、myrelease）</span>
+                  <span class="help-icon" @mouseover="organizeMarkerTooltipVisible = true" @mouseleave="organizeMarkerTooltipVisible = false">
+                    <i class="fas fa-question-circle"></i>
+                    <div class="tooltip" v-show="organizeMarkerTooltipVisible">
+                      <div class="tooltip-content">
+                        <div class="tooltip-title">整理标识说明</div>
+                        <div class="tooltip-body">
+                          <p>原地重命名靠它判断哪些文件已整理过，避免重复处理。</p>
+                          <p><b>tmdb</b>（推荐）：文件名写入 {tmdb-xxxx} 作为标识。</p>
+                          <p><b>off</b>：文件名不写入任何标识，靠规范命名结构判断；文件夹仍带 TMDB ID，不影响 Emby 识别。</p>
+                          <p><b>自定义</b>（如 v2）：文件名写入 [v2] 作为标识。</p>
+                        </div>
+                      </div>
+                    </div>
+                  </span>
                 </label>
-                <input v-model="organizeForm.rename_marker" class="form-input" placeholder="tmdb（推荐，{tmdb-xxx}）或自定义如 v2">
+                <input v-model="organizeForm.rename_marker" class="form-input" placeholder="tmdb（推荐）/ off（不写入文件名）/ 自定义如 v2">
               </div>
               <div class="form-group">
                 <label>媒体类型</label>
@@ -759,11 +771,29 @@
                   {{ tmdbTesting ? '测试中...' : '立即测试' }}
                 </button>
               </div>
-              <div class="organize-plan-summary">
-                <span class="summary-pill"><i class="fas fa-list"></i> 共 {{ organizePlanRelocates.length }} 项整理</span>
-                <span v-if="organizePlanSkipped.length" class="summary-pill warning"><i class="fas fa-circle-info"></i> 跳过 {{ organizePlanSkipped.length }} 项</span>
-                <span v-if="organizePlanNoTmdbCount > 0" class="summary-pill warning"><i class="fas fa-triangle-exclamation"></i> {{ organizePlanNoTmdbCount }} 项未匹配 TMDB（无 ID）</span>
+              <div class="organize-plan-tabs">
+                <button
+                  type="button"
+                  class="organize-plan-tab"
+                  :class="{ active: organizePlanActiveTab === 'plan' }"
+                  @click="organizePlanActiveTab = 'plan'"
+                >
+                  待整理 <span class="organize-plan-tab-count">{{ organizePlanRelocates.length }}</span>
+                </button>
+                <button
+                  v-if="organizePlanSkipped.length"
+                  type="button"
+                  class="organize-plan-tab skip"
+                  :class="{ active: organizePlanActiveTab === 'skip' }"
+                  @click="organizePlanActiveTab = 'skip'"
+                >
+                  已跳过 <span class="organize-plan-tab-count">{{ organizePlanSkipped.length }}</span>
+                </button>
+                <span v-if="organizePlanNoTmdbCount > 0" class="organize-plan-tabs-warning">
+                  <i class="fas fa-triangle-exclamation"></i> {{ organizePlanNoTmdbCount }} 项未匹配 TMDB（无 ID）
+                </span>
               </div>
+              <template v-if="organizePlanActiveTab === 'plan'">
               <div v-if="organizePlanGroups.length === 0" class="empty-state">
                 <p class="empty-title">当前没有可执行的计划</p>
                 <p class="empty-desc">点击「重新生成」让程序扫描目录并生成新的计划</p>
@@ -771,7 +801,9 @@
               <div v-else class="organize-plan-list">
                 <div v-for="group in organizePlanGroups" :key="group.key" class="organize-plan-group" :class="{ expanded: group.expanded, editing: !!(group.dirAction && organizePlanEditingId === group.dirAction.id) }">
                   <div class="organize-plan-group-header" @click="toggleOrganizePlanGroup(group.key)">
-                    <i class="fas organize-plan-group-chevron" :class="group.expanded ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                    <span class="organize-plan-group-chevron" :class="{ open: group.expanded }">
+                      <svg viewBox="0 0 8 12" fill="none"><path d="M1.5 1.5L6 6l-4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </span>
                     <div v-if="group.dirAction && organizePlanEditingId === group.dirAction.id" class="organize-plan-edit" @click.stop>
                       <div class="organize-plan-edit-source">{{ group.titleOld || group.title }}</div>
                       <i class="fas fa-arrow-right organize-plan-arrow"></i>
@@ -805,87 +837,97 @@
                     </span>
                   </div>
                   <div v-if="group.expanded" class="organize-plan-group-body">
-                    <div v-if="group.collapsedRanges.length" class="organize-plan-row collapsed-range" v-for="(range, ri) in group.collapsedRanges" :key="'range-'+group.key+'-'+ri">
-                      <div class="organize-plan-icon" :class="actionIconClass(range.sample)"><i :class="actionIconName(range.sample)"></i></div>
-                      <div class="organize-plan-body">
-                        <div class="organize-plan-title">
-                          <span class="organize-plan-collapsed-label">
-                            S{{ String(range.season).padStart(2,'0') }} ·
-                            <template v-if="range.consecutive">E{{ String(range.startEpisode).padStart(2,'0') }}–E{{ String(range.endEpisode).padStart(2,'0') }}</template>
-                            <template v-else>E{{ String(range.startEpisode).padStart(2,'0') }}–E{{ String(range.endEpisode).padStart(2,'0') }} 中</template>
-                            共 {{ range.actions.length }} 集（命名一致）
-                          </span>
+                    <template v-for="row in group.rows" :key="row.type === 'range' ? 'r-' + row.range.key : 'a-' + row.action.id">
+                      <div v-if="row.type === 'range'" class="organize-plan-row range">
+                        <div class="organize-plan-kind-col"><span class="organize-plan-kind tv">剧集</span></div>
+                        <div class="organize-plan-divider"></div>
+                        <div class="organize-plan-body">
+                          <div class="organize-plan-l1">
+                            S{{ String(row.range.season).padStart(2,'0') }} ·
+                            <template v-if="row.range.consecutive">E{{ String(row.range.startEpisode).padStart(2,'0') }}–E{{ String(row.range.endEpisode).padStart(2,'0') }}</template>
+                            <template v-else>E{{ String(row.range.startEpisode).padStart(2,'0') }}–E{{ String(row.range.endEpisode).padStart(2,'0') }} 中</template>
+                            共 {{ row.range.count }} 集（命名一致）
+                          </div>
+                          <div class="organize-plan-l2">
+                            <span class="organize-plan-oldchip">原名<span class="organize-plan-oldtip">{{ row.range.samplePattern.oldPattern }}</span></span>
+                            <span class="organize-plan-l2-dot">·</span>
+                            <span class="organize-plan-l2-mode">{{ row.range.samplePattern.newPattern }}</span>
+                          </div>
                         </div>
-                        <div class="organize-plan-sub">
-                          <span class="organize-plan-old-mini">{{ range.samplePattern.oldPattern }}</span>
-                          <i class="fas fa-arrow-right organize-plan-arrow"></i>
-                          <span class="organize-plan-new-mini">{{ range.samplePattern.newPattern }}</span>
-                          <button class="plan-row-toggle" @click.stop="expandCollapsedRange(group.key, ri)">展开 {{ range.actions.length }} 条</button>
-                        </div>
+                        <button class="plan-row-toggle" @click.stop="toggleCollapsedRange(row.range.key)">{{ row.range.expanded ? '收起' : '展开 ' + row.range.count + ' 条' }}</button>
                       </div>
-                    </div>
-                    <div v-for="action in group.visibleActions" :key="action.id" class="organize-plan-row" :class="{ editing: organizePlanEditingId === action.id, edited: action.metadata && action.metadata.edited }">
-                      <div class="organize-plan-icon" :class="actionIconClass(action)"><i :class="actionIconName(action)"></i></div>
-                      <div class="organize-plan-body">
-                        <div v-if="organizePlanEditingId === action.id" class="organize-plan-edit">
-                          <div class="organize-plan-edit-source">{{ action.source_name }}</div>
-                          <i class="fas fa-arrow-right organize-plan-arrow"></i>
-                          <input
-                            v-model="organizePlanEditingName"
-                            class="organize-plan-edit-input"
-                            @keydown.enter="commitPlanActionEdit(action)"
-                            @keydown.esc="cancelPlanActionEdit"
-                          />
-                          <button class="plan-row-btn ok" @click="commitPlanActionEdit(action)" :disabled="organizePlanEditingSaving"><i class="fas fa-check"></i></button>
-                          <button class="plan-row-btn cancel" @click="cancelPlanActionEdit"><i class="fas fa-xmark"></i></button>
-                        </div>
-                        <div v-else class="organize-plan-title">
-                          <span class="organize-plan-old">{{ action.source_name || '?' }}</span>
-                          <i class="fas fa-arrow-right organize-plan-arrow"></i>
-                          <span class="organize-plan-new">{{ action.target_name || '?' }}</span>
+                      <div v-else class="organize-plan-row" :class="{ editing: organizePlanEditingId === row.action.id, edited: row.action.metadata && row.action.metadata.edited }">
+                        <template v-if="organizePlanEditingId === row.action.id">
+                          <div class="organize-plan-kind-col"><span class="organize-plan-kind" :class="{ tv: planActionMeta(row.action).typeLabel !== '电影' }">{{ planActionMeta(row.action).typeLabel }}</span></div>
+                          <div class="organize-plan-divider"></div>
+                          <div class="organize-plan-body">
+                            <div class="organize-plan-edit">
+                              <div class="organize-plan-edit-source">{{ row.action.source_name }}</div>
+                              <i class="fas fa-arrow-right organize-plan-arrow"></i>
+                              <input
+                                v-model="organizePlanEditingName"
+                                class="organize-plan-edit-input"
+                                @keydown.enter="commitPlanActionEdit(row.action)"
+                                @keydown.esc="cancelPlanActionEdit"
+                              />
+                              <button class="plan-row-btn ok" @click="commitPlanActionEdit(row.action)" :disabled="organizePlanEditingSaving"><i class="fas fa-check"></i></button>
+                              <button class="plan-row-btn cancel" @click="cancelPlanActionEdit"><i class="fas fa-xmark"></i></button>
+                            </div>
+                          </div>
+                        </template>
+                        <template v-else>
+                          <div class="organize-plan-kind-col"><span class="organize-plan-kind" :class="{ tv: planActionMeta(row.action).typeLabel !== '电影' }">{{ planActionMeta(row.action).typeLabel }}</span></div>
+                          <div class="organize-plan-divider"></div>
+                          <div class="organize-plan-body">
+                            <div class="organize-plan-l1">
+                              <span class="organize-plan-oldchip">原名<span class="organize-plan-oldtip">{{ row.action.source_name || '?' }}</span></span>
+                              <i class="fas fa-arrow-right organize-plan-l1-arrow"></i>
+                              <span class="organize-plan-l1-new">{{ row.action.target_name || '?' }}</span>
+                            </div>
+                            <div class="organize-plan-l2">
+                              <template v-if="planActionMeta(row.action).isDir">
+                                <span class="organize-plan-l2-mode">{{ planActionMeta(row.action).dirLabel }}</span>
+                              </template>
+                              <template v-else>
+                                <span v-if="planActionMeta(row.action).title || planActionMeta(row.action).se" class="organize-plan-l2-title">{{ planActionMeta(row.action).title || planActionMeta(row.action).se }}</span>
+                                <span v-if="planActionMeta(row.action).title || planActionMeta(row.action).se" class="organize-plan-l2-dot">·</span>
+                                <span class="organize-plan-l2-mode">{{ planActionMeta(row.action).mode }}</span>
+                                <span class="organize-plan-l2-dot">·</span>
+                                <span class="organize-plan-l2-conf" :class="{ low: planActionMeta(row.action).confLow }">识别可信度 {{ planActionMeta(row.action).conf }}%</span>
+                              </template>
+                            </div>
+                          </div>
                           <span class="organize-plan-row-controls">
-                            <button class="plan-row-btn" @click="startPlanActionEdit(action)" title="编辑目标名"><i class="fas fa-pen"></i></button>
-                            <button class="plan-row-btn danger" @click="removePlanAction(action)" title="从计划中移除"><i class="fas fa-trash"></i></button>
+                            <button class="plan-row-btn" @click="startPlanActionEdit(row.action)" title="编辑目标名"><i class="fas fa-pen"></i></button>
+                            <button class="plan-row-btn danger" @click="removePlanAction(row.action)" title="从计划中移除"><i class="fas fa-trash"></i></button>
                           </span>
-                        </div>
-                        <div class="organize-plan-sub" v-if="organizePlanEditingId !== action.id">
-                          {{ action.reason }}
-                          <span v-if="action.confidence">· 识别可信度 {{ Math.round((action.confidence||0)*100) }}%</span>
-                        </div>
+                        </template>
                       </div>
-                    </div>
+                    </template>
                   </div>
                 </div>
-                <div v-if="organizePlanSkipped.length" class="organize-plan-skipped">
-                  <div class="organize-plan-skipped-title" @click="organizePlanSkipExpanded = !organizePlanSkipExpanded">
-                    <i class="fas" :class="organizePlanSkipExpanded ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
-                    <span>跳过 {{ organizePlanSkipped.length }} 项</span>
-                    <span class="organize-plan-skipped-reasons-inline">
-                      <span v-for="group in organizePlanSkipGroups" :key="group.reason" class="organize-plan-skipped-reason-chip">
-                        {{ group.reason || '其它' }} · {{ group.items.length }}
-                      </span>
-                    </span>
-                  </div>
-                  <div v-if="organizePlanSkipExpanded" class="organize-plan-skipped-body">
-                    <div v-for="group in organizePlanSkipGroups" :key="group.reason" class="organize-plan-skipped-reason-group">
-                      <div class="organize-plan-skipped-reason-header" @click="toggleOrganizePlanSkipReason(group.reason)">
-                        <i class="fas" :class="organizePlanSkipExpandedReasons[group.reason] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
-                        <span class="organize-plan-skipped-reason-label">{{ group.reason || '其它' }}</span>
-                        <span class="organize-plan-skipped-reason-count">{{ group.items.length }}</span>
-                      </div>
-                      <div v-if="organizePlanSkipExpandedReasons[group.reason]" class="organize-plan-skipped-reason-files">
-                        <div
-                          v-for="(item, idx) in (organizePlanSkipShowAll[group.reason] ? group.items : group.items.slice(0, ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT))"
-                          :key="idx"
-                          class="organize-plan-skipped-row"
-                        >{{ item.file_name }}</div>
-                        <div
-                          v-if="!organizePlanSkipShowAll[group.reason] && group.items.length > ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT"
-                          class="organize-plan-skipped-more"
-                          @click="showOrganizePlanSkipAll(group.reason)"
-                        >
-                          还有 {{ group.items.length - ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT }} 项，点击展开（可能略卡）
-                        </div>
+              </div>
+              </template>
+              <div v-if="organizePlanActiveTab === 'skip'" class="organize-plan-skipped">
+                <div class="organize-plan-skipped-body">
+                  <div v-for="group in organizePlanSkipGroups" :key="group.reason" class="organize-plan-skipped-reason-group">
+                    <div class="organize-plan-skipped-reason-header" @click="toggleOrganizePlanSkipReason(group.reason)">
+                      <i class="fas" :class="organizePlanSkipExpandedReasons[group.reason] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                      <span class="organize-plan-skipped-reason-label">{{ group.reason || '其它' }}</span>
+                      <span class="organize-plan-skipped-reason-count">{{ group.items.length }}</span>
+                    </div>
+                    <div v-if="organizePlanSkipExpandedReasons[group.reason]" class="organize-plan-skipped-reason-files">
+                      <div
+                        v-for="(item, idx) in (organizePlanSkipShowAll[group.reason] ? group.items : group.items.slice(0, ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT))"
+                        :key="idx"
+                        class="organize-plan-skipped-row"
+                      >{{ item.file_name }}</div>
+                      <div
+                        v-if="!organizePlanSkipShowAll[group.reason] && group.items.length > ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT"
+                        class="organize-plan-skipped-more"
+                        @click="showOrganizePlanSkipAll(group.reason)"
+                      >
+                        还有 {{ group.items.length - ORGANIZE_PLAN_SKIP_PREVIEW_LIMIT }} 项，点击展开（可能略卡）
                       </div>
                     </div>
                   </div>
@@ -1490,7 +1532,6 @@
       </div>
     </div>
 
-    <!-- 时间滚轮选择器 -->
     <TimeWheelPicker
       :visible="timePickerVisible"
       :startTime="form.time_start"
@@ -1554,13 +1595,13 @@ const organizeConflictPolicy = computed({
   },
 })
 const organizeMaxWorksTooltipVisible = ref(false)
+const organizeMarkerTooltipVisible = ref(false)
 const branchDialogVisible = ref(false)
 const branchLoading = ref(false)
 const branchTask = ref(null)
 const branches = ref([])
 const hoveredTemporaryBranchId = ref(null)
 
-// ── 目录整理状态 ──
 
 const organizeTasks = ref([])
 const organizeShowDialog = ref(false)
@@ -1585,6 +1626,7 @@ const organizePlanSkipped = ref([])
 const organizePlanTmdbStatus = ref('')
 const tmdbTesting = ref(false)
 const organizePlanSkipExpanded = ref(false)
+const organizePlanActiveTab = ref('plan')
 
 const testTmdbConnectivity = async () => {
   if (tmdbTesting.value) return
@@ -2819,7 +2861,6 @@ const handleVisibilityChange = () => {
   }
 }
 
-// ── 目录整理方法 ──
 
 const loadOrganizeTasks = async () => {
   try {
@@ -2828,7 +2869,6 @@ const loadOrganizeTasks = async () => {
       organizeTasks.value = resp.data.data || []
     }
   } catch (e) {
-    // 静默失败，轮询不需要报错
   }
 }
 
@@ -2847,7 +2887,6 @@ const loadOrganizeSettings = async () => {
       syncTagsFromSettings()
     }
   } catch (e) {
-    // 使用默认值
   }
 }
 
@@ -2951,7 +2990,7 @@ const saveOrganizeTask = async () => {
     return
   }
   if (organizeForm.action_type === 'rename' && !organizeForm.rename_marker.trim()) {
-    window.appNotification.warning('原地重命名必须设置标识（tmdb 或自定义），已整理文件靠标识判断跳过')
+    window.appNotification.warning('原地重命名必须设置标识：tmdb / 自定义 / off（不写入文件名，靠规范结构判断跳过）')
     return
   }
 
@@ -3256,6 +3295,40 @@ const actionIconName = (action) => {
   return 'fas fa-arrow-right-arrow-left'
 }
 
+const planActionMeta = (action) => {
+  const md = (action && action.metadata) || {}
+  const conf = Math.round((action.confidence || 0) * 100)
+  const confLow = action.confidence != null && conf < 80
+  const kindLabel = md.kind_label || ''
+  if (kindLabel === 'season_dir_rename' || kindLabel === 'dir_rename') {
+    return {
+      isDir: true,
+      typeLabel: '目录',
+      dirLabel: kindLabel === 'season_dir_rename' ? '季目录标准化' : '目录改名',
+      conf,
+      confLow,
+    }
+  }
+  const isTv = md.media_kind === 'tv'
+  let title = isTv ? '' : (md.title || '').trim()
+  if (!isTv && !title) title = String(action.reason || '').split('|')[1]?.trim() || ''
+  let se = ''
+  if (isTv && md.season != null && md.episode != null) {
+    se = `S${String(md.season).padStart(2, '0')}E${String(md.episode).padStart(2, '0')}`
+  }
+  const isRename = md.mode ? md.mode === 'rename' : action.source_parent_id === action.target_parent_id
+  return {
+    isDir: false,
+    typeLabel: isTv ? '剧集' : '电影',
+    kind: isTv ? '剧集' : '电影',
+    title,
+    se,
+    mode: isRename ? '原地重命名' : '移动并重命名',
+    conf,
+    confLow,
+  }
+}
+
 const _splitOrganizePlan = (plan) => {
   const actions = (plan && plan.actions) || []
   organizePlanRelocates.value = actions.filter(a => a.kind === 'relocate')
@@ -3267,6 +3340,8 @@ const _splitOrganizePlan = (plan) => {
   organizePlanSkipExpandedReasons.value = {}
   organizePlanSkipShowAll.value = {}
   organizePlanExpandedRanges.value = {}
+  organizePlanActiveTab.value =
+    (organizePlanRelocates.value.length === 0 && organizePlanSkipped.value.length > 0) ? 'skip' : 'plan'
 }
 
 const organizePlanNoTmdbCount = computed(() => {
@@ -3329,6 +3404,8 @@ const organizePlanGroups = computed(() => {
     let key
     if (tmdbId) {
       key = 'tmdb:' + tmdbId
+    } else if (md.group_uid) {
+      key = 'g:' + md.group_uid
     } else {
       const fallback = String(action.reason || '').split('|')[1]?.trim() || action.target_name
       key = 'title:' + fallback
@@ -3355,7 +3432,10 @@ const organizePlanGroups = computed(() => {
       titleNew = g.dirAction.target_name
       title = titleNew
     } else {
-      const sample = g.actions[0]
+      const sample = g.actions.find(a => {
+        const k = (a.metadata || {}).kind_label
+        return k !== 'season_dir_rename' && k !== 'dir_rename'
+      }) || g.actions[0]
       const md = (sample && sample.metadata) || {}
       if (md.group_old_dir_name && md.group_new_dir_name) {
         titleOld = md.group_old_dir_name
@@ -3377,13 +3457,11 @@ const organizePlanGroups = computed(() => {
       seasonBuckets.get(seasonKey).push({ ...action, _ep: ep ? ep.episode : null })
     }
 
-    const collapsedRanges = []
-    const visibleActions = []
-    let groupIndex = 0
+    const rows = []
     for (const [seasonKey, list] of seasonBuckets.entries()) {
       list.sort((a, b) => (a._ep || 0) - (b._ep || 0))
       if (seasonKey === 0) {
-        for (const a of list) visibleActions.push(a)
+        for (const a of list) rows.push({ type: 'action', action: a })
         continue
       }
       const subBuckets = new Map()
@@ -3394,33 +3472,37 @@ const organizePlanGroups = computed(() => {
         if (!subBuckets.has(subKey)) subBuckets.set(subKey, { oldP, newP, items: [] })
         subBuckets.get(subKey).items.push(a)
       }
+      let groupIndex = 0
       for (const { oldP, newP, items } of subBuckets.values()) {
         if (items.length < 3) {
-          for (const a of items) visibleActions.push(a)
+          for (const a of items) rows.push({ type: 'action', action: a })
           continue
         }
         groupIndex += 1
         const rangeKey = `${g.key}::S${seasonKey}::p${groupIndex}`
-        if (!organizePlanExpandedRanges.value[rangeKey]) {
-          const eps = items.map(a => a._ep).filter(v => v != null)
-          const minEp = eps.length ? Math.min(...eps) : null
-          const maxEp = eps.length ? Math.max(...eps) : null
-          const consecutive = items.every((a, i) => i === 0 || a._ep === items[i - 1]._ep + 1)
-          collapsedRanges.push({
+        const eps = items.map(a => a._ep).filter(v => v != null)
+        const minEp = eps.length ? Math.min(...eps) : null
+        const maxEp = eps.length ? Math.max(...eps) : null
+        const consecutive = items.every((a, i) => i === 0 || a._ep === items[i - 1]._ep + 1)
+        const rangeExpanded = organizePlanExpandedRanges.value[rangeKey] === true
+        rows.push({
+          type: 'range',
+          range: {
             key: rangeKey,
             season: seasonKey,
             startEpisode: minEp,
             endEpisode: maxEp,
             consecutive,
-            actions: items,
-            sample: items[0],
+            count: items.length,
+            expanded: rangeExpanded,
             samplePattern: {
               oldPattern: _formatCollapsedOldPattern(oldP, items, seasonKey),
               newPattern: _formatCollapsedNewPattern(newP, seasonKey),
             },
-          })
-        } else {
-          for (const a of items) visibleActions.push(a)
+          },
+        })
+        if (rangeExpanded) {
+          for (const a of items) rows.push({ type: 'action', action: a })
         }
       }
     }
@@ -3440,8 +3522,7 @@ const organizePlanGroups = computed(() => {
       actions: g.actions,
       actionCount,
       expanded,
-      collapsedRanges,
-      visibleActions,
+      rows,
     })
   }
   return groups
@@ -3454,14 +3535,11 @@ const toggleOrganizePlanGroup = (key) => {
   }
 }
 
-const expandCollapsedRange = (groupKey, rangeIdx) => {
-  const group = organizePlanGroups.value.find(g => g.key === groupKey)
-  if (!group) return
-  const range = group.collapsedRanges[rangeIdx]
-  if (!range) return
+const toggleCollapsedRange = (rangeKey) => {
+  if (!rangeKey) return
   organizePlanExpandedRanges.value = {
     ...organizePlanExpandedRanges.value,
-    [range.key]: true,
+    [rangeKey]: !organizePlanExpandedRanges.value[rangeKey],
   }
 }
 
@@ -3741,7 +3819,6 @@ const handleOrganizeDialogKeydown = (event) => {
   organizeShowDialog.value = false
 }
 
-// 切换 Tab 时加载数据
 watch(() => activeTab.value, (tab) => {
   if (tab === 'organize') {
     loadOrganizeTasks()
@@ -4670,7 +4747,6 @@ onBeforeUnmount(() => {
   display: inline-flex;
 }
 
-/* 填补按钮与下拉之间的空隙，避免移入子菜单时 hover 断开 */
 .run-menu-wrap::after {
   content: '';
   position: absolute;
@@ -4770,7 +4846,6 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-/* 对话框基础样式（与缓存保持一致） */
 .dialog-overlay {
   position: fixed;
   top: 0;
@@ -4887,6 +4962,12 @@ onBeforeUnmount(() => {
   font-weight: 400;
   color: #9ca3af;
   font-size: 12px;
+}
+
+.form-group label.with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .form-row {
@@ -5066,8 +5147,6 @@ onBeforeUnmount(() => {
   color: #4C74DF;
 }
 
-/* ── 目录整理 ── */
-
 .sub-tab-bar {
   display: flex;
   gap: 0;
@@ -5176,8 +5255,8 @@ onBeforeUnmount(() => {
 }
 
 .organize-plan-dialog {
-  width: 720px;
-  max-width: 92vw;
+  width: 860px;
+  max-width: 94vw;
   max-height: 86vh;
   display: flex;
   flex-direction: column;
@@ -5185,6 +5264,25 @@ onBeforeUnmount(() => {
 
 .organize-plan-dialog .dialog-content {
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.organize-plan-dialog .dialog-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.organize-plan-dialog .dialog-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.organize-plan-dialog .dialog-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.organize-plan-dialog .dialog-content::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .organize-plan-loading {
@@ -5304,6 +5402,72 @@ onBeforeUnmount(() => {
   background: #fff7ed;
 }
 
+.organize-plan-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 14px;
+}
+
+.organize-plan-tab {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 9px 16px;
+  font-size: 14px;
+  color: #6b7280;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: color .15s;
+}
+
+.organize-plan-tab.active {
+  color: #4C74DF;
+  border-bottom-color: #4C74DF;
+  font-weight: 600;
+}
+
+.organize-plan-tab-count {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  line-height: 16px;
+}
+
+.organize-plan-tab.active .organize-plan-tab-count {
+  background: #eef2ff;
+  color: #4C74DF;
+}
+
+.organize-plan-tab.skip .organize-plan-tab-count {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.organize-plan-tabs-warning {
+  margin-left: auto;
+  font-size: 12px;
+  color: #c2410c;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.organize-plan-skipped-title.static {
+  cursor: default;
+  color: #6b7280;
+}
+
+.organize-plan-skipped-title.static:hover {
+  color: #6b7280;
+}
+
 .organize-plan-list {
   display: flex;
   flex-direction: column;
@@ -5311,41 +5475,142 @@ onBeforeUnmount(() => {
 }
 
 .organize-plan-row {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  align-items: center;
+  gap: 0;
+  padding: 9px 6px;
   border-radius: 8px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  transition: background 0.12s ease;
 }
 
-.organize-plan-row.mkdir {
-  background: #fefce8;
-  border-color: #fde68a;
+.organize-plan-row:hover {
+  background: #f8fafc;
+  z-index: 20;
+}
+
+.organize-plan-row + .organize-plan-row {
+  border-top: 1px solid #f1f5f9;
+}
+
+.organize-plan-kind-col {
+  flex-shrink: 0;
+  width: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.organize-plan-kind {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: #eef2ff;
+  color: #4f46e5;
+  white-space: nowrap;
+}
+
+.organize-plan-kind.tv {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.organize-plan-divider {
+  flex-shrink: 0;
+  align-self: stretch;
+  border-left: 1px dashed #d6dbe3;
+  margin: 3px 13px;
+}
+
+.organize-plan-l1 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-all;
+  line-height: 1.45;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.organize-plan-l1-arrow {
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.organize-plan-l1-new {
+  min-width: 0;
+  word-break: break-all;
+}
+
+.organize-plan-l1 .organize-plan-oldchip {
+  font-size: 12px;
+  font-weight: 400;
+  align-self: center;
+}
+
+.organize-plan-l2 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.organize-plan-l2-title {
+  color: #475569;
+}
+
+.organize-plan-l2-dot {
+  color: #cbd5e1;
+}
+
+.organize-plan-l2-mode {
+  color: #64748b;
+}
+
+.organize-plan-l2-conf {
+  color: #64748b;
+}
+
+.organize-plan-l2-conf.low {
+  color: #ea580c;
+  font-weight: 600;
+}
+
+.organize-plan-row.range .plan-row-toggle {
+  margin-left: auto;
+  align-self: center;
+  flex-shrink: 0;
 }
 
 .organize-plan-icon {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #eef2ff;
   color: #4f46e5;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .organize-plan-icon.rename {
-  background: #ecfeff;
-  color: #0e7490;
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .organize-plan-icon.move {
-  background: #f0fdf4;
-  color: #15803d;
+  background: #ecfdf5;
+  color: #059669;
 }
 
 .organize-plan-body {
@@ -5366,15 +5631,56 @@ onBeforeUnmount(() => {
 .organize-plan-arrow {
   color: #94a3b8;
   font-size: 11px;
+  margin: 0 6px;
 }
 
 .organize-plan-old {
   color: #475569;
 }
 
+.organize-plan-oldchip {
+  position: relative;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: #4f46e5;
+  border-bottom: 1px dashed #4f46e5;
+  cursor: help;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.organize-plan-oldtip {
+  position: absolute;
+  left: 0;
+  top: 130%;
+  z-index: 30;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+  transition-delay: 0s;
+  width: max-content;
+  max-width: 520px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-radius: 8px;
+  white-space: normal;
+  word-break: break-all;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.organize-plan-oldchip:hover .organize-plan-oldtip {
+  visibility: visible;
+  opacity: 1;
+  transition-delay: 0.5s;
+}
+
 .organize-plan-new {
   color: #0f172a;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .organize-plan-sub {
@@ -5383,10 +5689,61 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.organize-plan-sub-fold {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.organize-plan-meta {
+  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.organize-plan-cap {
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.organize-plan-cap-inline {
+  margin-left: 2px;
+}
+
+.organize-plan-cap.kind {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.organize-plan-cap.se {
+  background: #ecfeff;
+  color: #0e7490;
+  font-variant-numeric: tabular-nums;
+}
+
+.organize-plan-cap.title {
+  background: #f1f5f9;
+  color: #334155;
+  font-weight: 600;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.organize-plan-cap.conf.low {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
 .organize-plan-skipped {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed #e5e7eb;
+  margin-top: 0;
 }
 
 .organize-plan-skipped-title {
@@ -5427,8 +5784,7 @@ onBeforeUnmount(() => {
 }
 
 .organize-plan-skipped-body {
-  margin-top: 6px;
-  padding-left: 18px;
+  margin-top: 2px;
   display: flex;
   flex-direction: column;
 }
@@ -5443,9 +5799,9 @@ onBeforeUnmount(() => {
 
 .organize-plan-skipped-reason-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 2px;
   cursor: pointer;
   user-select: none;
 }
@@ -5456,18 +5812,29 @@ onBeforeUnmount(() => {
 
 .organize-plan-skipped-reason-header > i {
   width: 10px;
+  margin-top: 4px;
   font-size: 10px;
   color: #9ca3af;
 }
 
 .organize-plan-skipped-reason-label {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   color: #6b7280;
+  line-height: 1.5;
 }
 
 .organize-plan-skipped-reason-count {
+  flex-shrink: 0;
+  margin-top: 1px;
   font-size: 11px;
-  color: #9ca3af;
+  font-weight: 600;
+  color: #fff;
+  background: #f97316;
+  border-radius: 999px;
+  padding: 1px 9px;
+  line-height: 16px;
 }
 
 .organize-plan-skipped-reason-files {
@@ -5500,7 +5867,6 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  overflow: hidden;
 }
 
 .organize-plan-group-header {
@@ -5509,16 +5875,35 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 12px;
   background: #f8fafc;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   color: #0f172a;
   position: relative;
 }
 
+.organize-plan-group.expanded .organize-plan-group-header {
+  border-radius: 8px 8px 0 0;
+}
+
 .organize-plan-group-chevron {
-  color: #64748b;
-  width: 12px;
+  color: #94a3b8;
+  width: 10px;
+  height: 10px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+
+.organize-plan-group-chevron svg {
+  width: 9px;
+  height: 9px;
+}
+
+.organize-plan-group-chevron.open {
+  transform: rotate(90deg);
 }
 
 .organize-plan-group-title-wrap {
@@ -5540,15 +5925,16 @@ onBeforeUnmount(() => {
 }
 
 .organize-plan-group-title .organize-plan-old {
-  flex: 0 100 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 42%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .organize-plan-group-title .organize-plan-new {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -5630,10 +6016,9 @@ onBeforeUnmount(() => {
 }
 
 .organize-plan-group-body {
-  padding: 6px 8px;
+  padding: 2px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
 .organize-plan-row {
@@ -5658,9 +6043,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.organize-plan-row.collapsed-range {
-  background: #f8fafc;
-  border-style: dashed;
+.organize-plan-row.collapsed-range .organize-plan-collapsed-label {
+  flex: 0 1 auto;
+}
+
+.organize-plan-row.collapsed-range .plan-row-toggle {
+  margin-left: auto;
 }
 
 .organize-plan-collapsed-label {

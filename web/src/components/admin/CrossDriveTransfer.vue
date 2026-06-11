@@ -1,6 +1,5 @@
 <template>
   <div class="cross-transfer">
-    <!-- 方向卡片 -->
     <div class="flow-grid">
       <div
         v-for="r in routes"
@@ -38,7 +37,6 @@
         </div>
       </div>
 
-      <!-- 更多组合占位 -->
       <div class="flow-card disabled" @click="notify('warning', '更多组合规划中')">
         <div class="fc-body">
           <div class="fc-slot">
@@ -63,7 +61,6 @@
       </div>
     </div>
 
-    <!-- 大面板：顶栏方向指示 / 双栏选目 -->
     <div class="transfer-shell">
       <div class="transfer-topbar">
         <div class="tb-side tb-src">
@@ -142,7 +139,6 @@
       </div>
     </div>
 
-    <!-- 操作条：左数字 | 中提示/进度 | 右操作岛 -->
     <div class="ct-footer">
       <div class="ct-footer-bar">
         <div class="ct-footer-left">
@@ -316,11 +312,11 @@ const routes = ref([])
 const activeId = ref('')
 const swapped = ref(false)
 
-const src = ref(null)        // { accId, accName, parentId, path }
+const src = ref(null)
 const dst = ref(null)
 const srcTree = ref(null)
 const dstTree = ref(null)
-const probeFiles = ref([])   // 扁平文件列表（含 reuse），执行秒传用
+const probeFiles = ref([])
 
 const conflict = ref('rename')
 const fallback = ref('off')
@@ -332,8 +328,8 @@ const settingsDropdownStyle = ref({})
 const SETTINGS_DROPDOWN_WIDTH = 296
 const footerTipIndex = ref(0)
 let footerTipTimer = null
-const running = ref('')      // '' | 'probe' | 'exec'
-const abortCtrl = ref(null)  // 中断试探/传输的流式请求（含扫描阶段）
+const running = ref('')
+const abortCtrl = ref(null)
 const barWidth = ref(0)
 const metrics = reactive({ total: 0, ok: 0, no: 0, done: 0 })
 const relayNotice = ref(null)
@@ -366,8 +362,6 @@ const dstDriver = computed(() => {
 const srcPan = computed(() => panOf(srcDriver.value))
 const dstPan = computed(() => panOf(dstDriver.value))
 
-// 目标盘支持的上传冲突策略（后端 _pan_meta 按驱动能力下发，默认 rename+overwrite）。
-// 双向线路按当前换向后的真实目标取值。
 const dstMeta = computed(() => {
   if (!curRoute.value) return null
   return swapped.value ? curRoute.value.from : curRoute.value.to
@@ -379,7 +373,6 @@ const dstConflictPolicies = computed(() => {
 })
 const targetOverwriteUnsupported = computed(() => !dstConflictPolicies.value.includes('overwrite'))
 const targetRenameUnsupported = computed(() => !dstConflictPolicies.value.includes('rename'))
-// 用户选了目标盘不支持的策略时，自动落到其支持的另一项再下发。
 const effectiveConflict = computed(() => {
   if (conflict.value === 'overwrite' && targetOverwriteUnsupported.value) return 'rename'
   if (conflict.value === 'rename' && targetRenameUnsupported.value) return 'overwrite'
@@ -444,7 +437,6 @@ function markProbeNoticeSkipped() {
   try {
     localStorage.setItem(CT_PROBE_NOTICE_KEY, '1')
   } catch {
-    // 忽略
   }
 }
 
@@ -452,7 +444,6 @@ function clearProbeNoticeSkipped() {
   try {
     localStorage.removeItem(CT_PROBE_NOTICE_KEY)
   } catch {
-    // 忽略
   }
 }
 
@@ -547,7 +538,6 @@ function createFileRunContext(fileList) {
   return { nodeMap, fileMap, orderedPaths, setNodeRun, clearAllRun, scrollToFile }
 }
 
-// ===== 卡片 =====
 function selectRoute(r) {
   activeId.value = r.id
   swapped.value = false
@@ -560,13 +550,11 @@ function swap() {
   notify('success', `已交换方向：${srcPan.value.name} → ${dstPan.value.name}`)
 }
 
-// 中断进行中的试探/传输：abort 会让扫描 axios 与流式 fetch 抛出，由各自 catch 处理
 function stopRun() {
   if (!running.value) return
-  try { abortCtrl.value?.abort() } catch { /* 忽略 */ }
+  try { abortCtrl.value?.abort() } catch {}
 }
 
-// ===== 选择账号 + 目录（复用 FolderSelectorModal）=====
 async function openPicker(mode) {
   const driver = mode === 'src' ? srcDriver.value : dstDriver.value
   const panName = panOf(driver).name || driver
@@ -605,7 +593,6 @@ async function openPicker(mode) {
     dstTree.value = null
     resetMetrics()
   } catch (e) {
-    // 用户取消，忽略
   }
 }
 
@@ -651,7 +638,6 @@ async function scanSource(clearTree = true) {
   }
 }
 
-// ===== 试探（先扫描秒列文件树，再流式逐文件试探）=====
 async function probe() {
   if (!src.value || !dst.value || !curRoute.value) return
   if (!(await confirmProbeNotice())) return
@@ -773,7 +759,6 @@ async function probe() {
   }
 }
 
-// ===== 开始秒传（可选先扫描；按设置尝试秒传并提交兜底）=====
 async function start() {
   if (!src.value || !dst.value || !curRoute.value) return
   clearRelayNotice()
@@ -930,7 +915,6 @@ async function start() {
   }
 }
 
-// ===== 工具 =====
 function decorateTree(nodes) {
   for (const n of nodes || []) {
     if (n.type === 'dir') { n.open = true; decorateTree(n.children) }
@@ -1027,7 +1011,6 @@ function loadCtSettings() {
     if (data.conflict === 'rename' || data.conflict === 'overwrite') conflict.value = data.conflict
     if (data.fallback === 'on' || data.fallback === 'off') fallback.value = data.fallback
   } catch {
-    // 忽略损坏的本地缓存
   }
 }
 
@@ -1038,7 +1021,6 @@ function saveCtSettings() {
       fallback: fallback.value,
     }))
   } catch {
-    // localStorage 不可用时仅本次会话有效
   }
 }
 
@@ -1110,7 +1092,6 @@ onUnmounted(() => {
   --fc-pill-md5-fg: #6d28d9;
 }
 
-/* 卡片：双行布局，尺寸介于 demo(大) 与 6列单行(小) 之间 */
 .flow-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
@@ -1176,7 +1157,6 @@ onUnmounted(() => {
 .fc-soon { font-size: 10px; color: var(--text-secondary); }
 .biflag { font-size: 9px; font-weight: 700; color: #7c3aed; background: rgba(124,58,237,.14); padding: 1px 6px; border-radius: 999px; margin-left: 2px; }
 
-/* logo 徽标 */
 .logo-chip { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .logo-chip img { object-fit: contain; border-radius: 7px; }
 .logo-chip.s26 { width: 26px; height: 26px; } .logo-chip.s26 img { width: 26px; height: 26px; }
@@ -1198,7 +1178,6 @@ onUnmounted(() => {
 .ct-usage-inline-hint i { color: var(--primary-color); flex-shrink: 0; }
 .ct-usage-inline-hint > span { min-width: 0; }
 
-/* 大面板 */
 .transfer-shell {
   margin-top: 10px;
   background: var(--card-bg);
@@ -1233,7 +1212,6 @@ onUnmounted(() => {
   gap: 3px;
   flex-shrink: 0;
   padding: 0 4px;
-  /* 单向/双向卡片高度一致，避免切换时行高跳动（双向多出“可交换”一行） */
   min-height: 46px;
 }
 .tb-flow {
@@ -1313,7 +1291,6 @@ onUnmounted(() => {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(320%); }
 }
-/* 操作条 */
 .ct-footer {
   margin-top: 10px;
   background: linear-gradient(180deg, var(--card-bg), color-mix(in srgb, var(--app-bg) 40%, var(--card-bg)));
@@ -1551,7 +1528,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-/* 按钮（独立命名，避免与全局 .btn 冲突）*/
 .ct-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--card-bg); color: var(--text-regular); font-size: 14px; font-weight: 600; cursor: pointer; transition: filter .2s, opacity .2s; white-space: nowrap; }
 .ct-btn:disabled { opacity: .5; cursor: not-allowed; }
 .ct-btn-primary { background: linear-gradient(135deg, var(--primary-color), var(--primary-color-end)); border-color: transparent; color: #fff; box-shadow: 0 2px 6px rgba(76,116,223,.22); }

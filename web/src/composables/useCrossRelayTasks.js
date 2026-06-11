@@ -147,7 +147,6 @@ export function useCrossRelayTasks() {
     return `${(speed / 1024 / 1024).toFixed(2)} MB/s`
   }
 
-  // 上传阶段从消息里提取“分片（x/y）”单独展示；驱动消息不含分片时返回空
   const formatRelayPart = (task) => {
     if (task?.phase !== 'uploading') return ''
     const m = String(task?.message || '').match(/分片[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/)

@@ -336,8 +336,6 @@ const {
   formatRelayPart,
 } = props.relay
 
-// 模板里这三处需要写回（切换页签/视图），从 props 解构的 ref 在模板写入时不会自动落到 .value，
-// 用可写 computed 显式代理，确保写入命中真实 ref。
 const taskPanelCategory = computed({
   get: () => props.uploadApi.taskPanelCategory.value,
   set: (v) => { props.uploadApi.taskPanelCategory.value = v },
@@ -353,7 +351,6 @@ const relayTaskView = computed({
 </script>
 
 <style scoped>
-/* 面板加载动画（与首页遮罩共享同名类，scoped 下需自带一份） */
 .loading-spinner {
   width: 40px;
   height: 40px;
@@ -369,7 +366,6 @@ const relayTaskView = computed({
   100% { transform: rotate(360deg); }
 }
 
-/* 上传任务面板 */
 .upload-task-panel {
   position: fixed;
   top: 50%;
