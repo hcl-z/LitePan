@@ -131,10 +131,10 @@ export function CachePanel() {
         <Metric title="保持任务" value={String(retentionStats.total_count ?? retention.length)} />
       </div>
 
-      <Tabs defaultValue="config">
+      <Tabs defaultValue="retention">
         <TabsList>
-          <TabsTrigger value="config">全局配置</TabsTrigger>
           <TabsTrigger value="retention">缓存保持</TabsTrigger>
+          <TabsTrigger value="config">全局配置</TabsTrigger>
         </TabsList>
         <TabsContent value="config" className="mt-4">
           <Card>

@@ -5,7 +5,7 @@ import json
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from cache.cache_keys import CacheKeyGenerator
 from config import config_manager
@@ -56,6 +56,12 @@ class FeishuMessageContext:
     user_id: str = ""
     open_id: str = ""
     text: str = ""
+
+
+@dataclass
+class FeishuBotResponse:
+    text: str = ""
+    card: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -235,9 +241,13 @@ class FeishuBotService:
                 return
             asyncio.run_coroutine_threadsafe(self._handle_message(ctx), self._loop)
 
+        def handle_card_action(data):
+            return self._handle_card_action(lark, data)
+
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(handle_message)
+            .register_p2_card_action_trigger(handle_card_action)
             .build()
         )
 
@@ -337,6 +347,43 @@ class FeishuBotService:
             text=text,
         )
 
+    def _handle_card_action(self, lark: Any, data: Any) -> Any:
+        try:
+            from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+
+            raw = json.loads(lark.JSON.marshal(data))
+            event = raw.get("event") if isinstance(raw, dict) else {}
+            action = event.get("action") or {}
+            value = action.get("value") or {}
+            context = event.get("context") or {}
+            operator = event.get("operator") or {}
+            command = str(value.get("litepan_command") or "").strip()
+            ctx = FeishuMessageContext(
+                chat_id=str(context.get("open_chat_id") or ""),
+                user_id=str(operator.get("user_id") or ""),
+                open_id=str(operator.get("open_id") or ""),
+                text=command,
+            )
+            if not command:
+                return self._card_action_toast(P2CardActionTriggerResponse, "按钮缺少命令参数。", "warning")
+            if not self._is_allowed(ctx):
+                return self._card_action_toast(P2CardActionTriggerResponse, "未授权：请先配置允许的飞书群或用户。", "warning")
+            if not self._loop or self._loop.is_closed():
+                return self._card_action_toast(P2CardActionTriggerResponse, "LitePan 事件循环不可用。", "error")
+            asyncio.run_coroutine_threadsafe(self._handle_card_action_command(ctx, command), self._loop)
+            return self._card_action_toast(P2CardActionTriggerResponse, "已收到，正在执行。", "success")
+        except Exception as e:
+            self._logger.warning(f"飞书卡片回调处理失败: {e}")
+            try:
+                from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+
+                return self._card_action_toast(P2CardActionTriggerResponse, f"处理失败：{_truncate_error(e, 60)}", "error")
+            except Exception:
+                return None
+
+    def _card_action_toast(self, response_cls: Any, content: str, toast_type: str = "info") -> Any:
+        return response_cls({"toast": {"type": toast_type, "content": content}})
+
     async def _handle_message(self, ctx: FeishuMessageContext) -> None:
         command = self._extract_command(ctx.text)
         if command is None:
@@ -354,6 +401,17 @@ class FeishuBotService:
             self._logger.error(f"飞书机器人命令执行失败: {e}")
             message = f"执行失败：{_truncate_error(e)}"
         await self._reply(ctx.chat_id, message)
+
+    async def _handle_card_action_command(self, ctx: FeishuMessageContext, command: str) -> None:
+        self._logger.info(
+            f"飞书卡片命令: chat={ctx.chat_id or '-'} user={ctx.user_id or ctx.open_id or '-'} command={command}"
+        )
+        try:
+            response = await self._execute_command(command)
+        except Exception as e:
+            self._logger.error(f"飞书卡片命令执行失败: {e}")
+            response = f"执行失败：{_truncate_error(e)}"
+        await self._reply(ctx.chat_id, response)
 
     def _extract_command(self, text: str) -> Optional[str]:
         value = str(text or "").strip()
@@ -376,33 +434,35 @@ class FeishuBotService:
             or (ctx.open_id and ctx.open_id in self._allowed_user_ids)
         )
 
-    async def _execute_command(self, command: str) -> str:
+    async def _execute_command(self, command: str) -> Union[str, FeishuBotResponse]:
         parts = command.strip().split()
-        if not parts or parts[0] in {"help", "帮助"}:
-            return self._help_text()
+        if not parts or parts[0].lower() in {"help", "帮助", "菜单", "menu"}:
+            return FeishuBotResponse(text=self._help_text(), card=self._build_help_card())
         action = parts[0].lower()
-        if action == "accounts":
-            return await self._accounts_text()
-        if action == "status":
-            return await self._status_text()
-        if action == "refresh":
+        if action in {"accounts", "account", "账号", "账号列表"}:
+            return await self._accounts_response()
+        if action in {"status", "状态"}:
+            return await self._status_response()
+        if action in {"refresh", "刷新"}:
             return await self._handle_refresh(parts[1:])
-        if action == "入库":
+        if action in {"入库", "ingest"}:
             return await self._handle_ingest(parts[1:])
-        if action == "cache":
+        if action in {"cache", "缓存", "缓存保持"}:
             return await self._handle_cache(parts[1:])
-        if action == "strm":
+        if action in {"strm", "流", "流生成"}:
             return await self._handle_strm(parts[1:])
-        if action in {"organize", "media"}:
+        if action in {"organize", "media", "整理", "媒体整理", "目录整理"}:
             return await self._handle_organize(parts[1:])
-        return f"未知命令：{action}\n\n{self._help_text()}"
+        return FeishuBotResponse(text=f"未知命令：{action}\n\n{self._help_text()}", card=self._build_help_card())
 
     async def _handle_refresh(self, args: Sequence[str]) -> str:
+        if len(args) == 1 and args[0].lower() != "all":
+            args = ("account", args[0])
         if len(args) >= 2 and args[0].lower() == "account":
             try:
                 account_id = int(args[1])
             except ValueError:
-                return "account_id 必须是数字。用法：/lp refresh account <account_id>"
+                return f"account_id 必须是数字。用法：{self._prefix} 刷新 <account_id|all>"
             return self._format_refresh_account_result(
                 await self._refresh_service.refresh_account_content(account_id)
             )
@@ -427,7 +487,7 @@ class FeishuBotService:
             if len(results) > 8:
                 lines.append(f"... 其余 {len(results) - 8} 个账号已省略")
             return "\n".join(lines)
-        return "用法：/lp refresh account <account_id> 或 /lp refresh all"
+        return f"用法：{self._prefix} 刷新 <account_id|all>"
 
     async def _handle_ingest(self, args: Sequence[str]) -> str:
         if len(args) == 1:
@@ -486,7 +546,9 @@ class FeishuBotService:
             )
         return results
 
-    async def _handle_cache(self, args: Sequence[str]) -> str:
+    async def _handle_cache(self, args: Sequence[str]) -> Union[str, FeishuBotResponse]:
+        if not args or args[0].lower() in {"list", "列表"}:
+            return await self._cache_tasks_response()
         if len(args) == 2 and args[0].lower() == "run":
             from core.cache_retention_manager import cache_retention_manager
 
@@ -500,9 +562,11 @@ class FeishuBotService:
                 return "config_id 必须是数字。用法：/lp cache run <config_id|all>"
             state = await cache_retention_manager.refresh_task_now(config_id)
             return f"缓存保持任务 {target} 触发结果：{state}"
-        return "用法：/lp cache run <config_id|all>"
+        return f"用法：{self._prefix} 缓存 或 {self._prefix} cache run <config_id|all>"
 
-    async def _handle_strm(self, args: Sequence[str]) -> str:
+    async def _handle_strm(self, args: Sequence[str]) -> Union[str, FeishuBotResponse]:
+        if not args or args[0].lower() in {"list", "列表"}:
+            return await self._strm_tasks_response()
         if len(args) >= 2 and args[0].lower() == "run":
             from core.strm_sync_manager import strm_sync_manager
 
@@ -523,30 +587,131 @@ class FeishuBotService:
                 return "task_id 必须是数字。用法：/lp strm run <task_id|all> [auto|full|branch]"
             state = await strm_sync_manager.run_task_now(task_id, run_mode=run_mode)
             return f"STRM 任务 {target} 触发结果：{state}"
-        return "用法：/lp strm run <task_id|all> [auto|full|branch]"
+        return f"用法：{self._prefix} strm 或 {self._prefix} strm run <task_id|all> [auto|full|branch]"
 
-    async def _handle_organize(self, args: Sequence[str]) -> str:
+    async def _handle_organize(self, args: Sequence[str]) -> Union[str, FeishuBotResponse]:
+        if not args or args[0].lower() in {"list", "列表"}:
+            return await self._media_tasks_response()
         if len(args) == 2 and args[0].lower() == "run":
             from mediaorganize import is_running, run_task
 
             task_id = args[1]
+            if task_id.lower() == "all":
+                tasks = await db.get_media_organize_tasks()
+                count = 0
+                skipped = 0
+                for task in tasks:
+                    current_task_id = str(task.get("id") or "")
+                    if not current_task_id:
+                        continue
+                    if is_running(current_task_id):
+                        skipped += 1
+                        continue
+                    await run_task(current_task_id)
+                    count += 1
+                return f"已提交 {count} 个媒体整理任务，跳过运行中任务 {skipped} 个。"
             if is_running(task_id):
                 return f"媒体整理任务 {task_id} 正在执行中。"
             result = await run_task(task_id)
             return f"媒体整理任务已提交：{result.get('task_id', task_id)}"
-        return "用法：/lp organize run <task_id>"
+        return f"用法：{self._prefix} 整理 或 {self._prefix} organize run <task_id|all>"
+
+    async def _accounts_response(self) -> FeishuBotResponse:
+        accounts = await db.list_accounts(include_inactive=True)
+        return FeishuBotResponse(
+            text=self._format_accounts_text(accounts),
+            card=self._build_accounts_card(accounts),
+        )
+
+    async def _cache_tasks_response(self) -> FeishuBotResponse:
+        configs = await db.get_cache_retention_configs()
+        return FeishuBotResponse(
+            text=self._format_cache_tasks_text(configs),
+            card=self._build_cache_tasks_card(configs),
+        )
+
+    async def _strm_tasks_response(self) -> FeishuBotResponse:
+        tasks = await db.get_strm_sync_tasks()
+        account_map = await self._account_name_map()
+        return FeishuBotResponse(
+            text=self._format_strm_tasks_text(tasks, account_map),
+            card=self._build_strm_tasks_card(tasks, account_map),
+        )
+
+    async def _media_tasks_response(self) -> FeishuBotResponse:
+        tasks = await db.get_media_organize_tasks()
+        account_map = await self._account_name_map()
+        return FeishuBotResponse(
+            text=self._format_media_tasks_text(tasks, account_map),
+            card=self._build_media_tasks_card(tasks, account_map),
+        )
 
     async def _accounts_text(self) -> str:
         accounts = await db.list_accounts(include_inactive=True)
+        return self._format_accounts_text(accounts)
+
+    def _format_accounts_text(self, accounts: Sequence[Dict[str, Any]]) -> str:
         if not accounts:
             return "暂无网盘账号。"
         lines = ["网盘账号："]
         for account in accounts:
             enabled = "启用" if account.get("is_active", True) else "停用"
-            lines.append(f"- {account.get('id')}：{account.get('name')}（{enabled}）")
+            lines.append(
+                f"- {account.get('id')}：{account.get('name')}（{enabled}，{account.get('driver_type') or '-'}）"
+            )
         return "\n".join(lines)
 
+    def _format_cache_tasks_text(self, configs: Sequence[Dict[str, Any]]) -> str:
+        if not configs:
+            return "暂无缓存保持任务。"
+        lines = ["缓存保持任务："]
+        for config in configs:
+            lines.append(
+                f"- #{config.get('id')} {config.get('account_name') or '未知账号'}："
+                f"{config.get('path') or '/'}（{config.get('status') or 'unknown'}）"
+            )
+        return "\n".join(lines)
+
+    def _format_strm_tasks_text(self, tasks: Sequence[Dict[str, Any]], account_map: Dict[int, str]) -> str:
+        if not tasks:
+            return "暂无 STRM 任务。"
+        lines = ["STRM 任务："]
+        for task in tasks:
+            account_id = int(task.get("account_id") or 0)
+            lines.append(
+                f"- #{task.get('id')} {task.get('name') or '未命名'}："
+                f"{account_map.get(account_id, f'账号{account_id}')} / {task.get('path') or '/'}"
+                f"（{task.get('status') or 'unknown'}）"
+            )
+        return "\n".join(lines)
+
+    def _format_media_tasks_text(self, tasks: Sequence[Dict[str, Any]], account_map: Dict[int, str]) -> str:
+        if not tasks:
+            return "暂无媒体整理任务。"
+        lines = ["媒体整理任务："]
+        for task in tasks:
+            account_id = self._safe_int(task.get("account_id"))
+            lines.append(
+                f"- {task.get('id')} {task.get('task_name') or '未命名'}："
+                f"{account_map.get(account_id, f'账号{account_id}')}（{task.get('status') or 'idle'}）"
+            )
+        return "\n".join(lines)
+
+    async def _account_name_map(self) -> Dict[int, str]:
+        accounts = await db.list_accounts(include_inactive=True)
+        return {int(account.get("id") or 0): str(account.get("name") or f"账号{account.get('id')}") for account in accounts}
+
+    async def _status_response(self) -> FeishuBotResponse:
+        status = await self._collect_status()
+        return FeishuBotResponse(
+            text=self._format_status_text(status),
+            card=self._build_status_card(status),
+        )
+
     async def _status_text(self) -> str:
+        return self._format_status_text(await self._collect_status())
+
+    async def _collect_status(self) -> Dict[str, int]:
         from core.cache_retention_manager import cache_retention_manager
         from core.strm_sync_manager import strm_sync_manager
         from mediaorganize import is_running
@@ -556,12 +721,348 @@ class FeishuBotService:
         strm_queued = len(strm_sync_manager.get_queued_task_ids())
         media_tasks = await db.get_media_organize_tasks()
         media_running = sum(1 for task in media_tasks if is_running(str(task.get("id"))))
+        return {
+            "cache_running": cache_running,
+            "strm_running": strm_running,
+            "strm_queued": strm_queued,
+            "media_running": media_running,
+        }
+
+    def _format_status_text(self, status: Dict[str, int]) -> str:
         return (
             "LitePan 任务状态：\n"
-            f"- 缓存保持运行中：{cache_running}\n"
-            f"- STRM 运行中：{strm_running}，队列中：{strm_queued}\n"
-            f"- 媒体整理运行中：{media_running}"
+            f"- 缓存保持运行中：{status['cache_running']}\n"
+            f"- STRM 运行中：{status['strm_running']}，队列中：{status['strm_queued']}\n"
+            f"- 媒体整理运行中：{status['media_running']}"
         )
+
+    def _build_accounts_card(self, accounts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        active_count = sum(1 for account in accounts if account.get("is_active", True))
+        elements: List[Dict[str, Any]] = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"共 **{len(accounts)}** 个账号，启用 **{active_count}** 个。点击按钮可直接执行账号级操作。",
+                },
+            },
+            {"tag": "hr"},
+        ]
+        if not accounts:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "暂无网盘账号。"}})
+        for account in accounts[:12]:
+            account_id = int(account.get("id") or 0)
+            name = self._card_escape(account.get("name") or f"账号{account_id}")
+            driver_type = self._card_escape(account.get("driver_type") or "-")
+            status = self._card_escape(account.get("status") or "unknown")
+            enabled = "启用" if account.get("is_active", True) else "停用"
+            elements.extend(
+                [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": (
+                                f"**#{account_id} {name}**\n"
+                                f"驱动：{driver_type} ｜ 状态：{enabled} ｜ 认证：{status}"
+                            ),
+                        },
+                    },
+                    {
+                        "tag": "action",
+                        "actions": [
+                            self._card_button("刷新", "primary", f"refresh account {account_id}"),
+                            self._card_button("入库", "default", f"入库 {account_id}"),
+                        ],
+                    },
+                    {"tag": "hr"},
+                ]
+            )
+        if len(accounts) > 12:
+            elements.append(
+                {
+                    "tag": "note",
+                    "elements": [
+                        {
+                            "tag": "plain_text",
+                            "content": f"其余 {len(accounts) - 12} 个账号未展示，可继续使用 {self._prefix} 刷新 <账号ID>。",
+                        }
+                    ],
+                }
+            )
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("刷新全部", "primary", "refresh all"),
+                    self._card_button("全部入库", "danger", "入库 all"),
+                    self._card_button("查看状态", "default", "status"),
+                ],
+            }
+        )
+        return self._base_card("LitePan 账号列表", "blue", elements)
+
+    def _build_cache_tasks_card(self, configs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        running_count = sum(1 for config in configs if str(config.get("status") or "") == "running")
+        elements: List[Dict[str, Any]] = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"共 **{len(configs)}** 个缓存保持任务，运行中 **{running_count}** 个。",
+                },
+            },
+            {"tag": "hr"},
+        ]
+        if not configs:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "暂无缓存保持任务。"}})
+        for config in configs:
+            config_id = int(config.get("id") or 0)
+            account = self._card_escape(config.get("account_name") or f"账号{config.get('account_id')}")
+            path = self._card_escape(config.get("path") or "/")
+            status = self._card_escape(config.get("status") or "unknown")
+            file_count = int(config.get("file_count") or 0)
+            last_status = self._card_escape(config.get("last_refresh_status") or "-")
+            elements.extend(
+                [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": (
+                                f"**#{config_id} {account}**\n"
+                                f"目录：{path}\n状态：{status} ｜ 文件：{file_count} ｜ 上次：{last_status}"
+                            ),
+                        },
+                    },
+                    {
+                        "tag": "action",
+                        "actions": [self._card_button("立即刷新", "primary", f"cache run {config_id}")],
+                    },
+                    {"tag": "hr"},
+                ]
+            )
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("刷新全部缓存任务", "primary", "cache run all"),
+                    self._card_button("查看状态", "default", "status"),
+                ],
+            }
+        )
+        return self._base_card("LitePan 缓存保持任务", "turquoise", elements)
+
+    def _build_strm_tasks_card(self, tasks: Sequence[Dict[str, Any]], account_map: Dict[int, str]) -> Dict[str, Any]:
+        running_count = sum(1 for task in tasks if str(task.get("status") or "") == "running")
+        elements: List[Dict[str, Any]] = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"共 **{len(tasks)}** 个 STRM 任务，启用 **{running_count}** 个。",
+                },
+            },
+            {"tag": "hr"},
+        ]
+        if not tasks:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "暂无 STRM 任务。"}})
+        for task in tasks:
+            task_id = int(task.get("id") or 0)
+            account_id = int(task.get("account_id") or 0)
+            name = self._card_escape(task.get("name") or f"STRM#{task_id}")
+            account = self._card_escape(account_map.get(account_id, f"账号{account_id}"))
+            path = self._card_escape(task.get("path") or "/")
+            status = self._card_escape(task.get("status") or "unknown")
+            last_status = self._card_escape(task.get("last_scan_status") or "-")
+            file_count = int(task.get("file_count") or 0)
+            elements.extend(
+                [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": (
+                                f"**#{task_id} {name}**\n"
+                                f"账号：{account} ｜ 目录：{path}\n"
+                                f"状态：{status} ｜ 文件：{file_count} ｜ 上次：{last_status}"
+                            ),
+                        },
+                    },
+                    {
+                        "tag": "action",
+                        "actions": [
+                            self._card_button("自动生成", "primary", f"strm run {task_id} auto"),
+                            self._card_button("全量生成", "default", f"strm run {task_id} full"),
+                        ],
+                    },
+                    {"tag": "hr"},
+                ]
+            )
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("触发全部 STRM", "primary", "strm run all auto"),
+                    self._card_button("全量触发全部", "danger", "strm run all full"),
+                    self._card_button("查看状态", "default", "status"),
+                ],
+            }
+        )
+        return self._base_card("LitePan STRM 任务", "purple", elements)
+
+    def _build_media_tasks_card(self, tasks: Sequence[Dict[str, Any]], account_map: Dict[int, str]) -> Dict[str, Any]:
+        active_count = sum(1 for task in tasks if str(task.get("status") or "idle") in {"running", "planning", "stopping"})
+        elements: List[Dict[str, Any]] = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"共 **{len(tasks)}** 个媒体整理任务，执行中 **{active_count}** 个。",
+                },
+            },
+            {"tag": "hr"},
+        ]
+        if not tasks:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "暂无媒体整理任务。"}})
+        for task in tasks:
+            task_id = str(task.get("id") or "")
+            account_id = self._safe_int(task.get("account_id"))
+            config = self._json_dict(task.get("config"))
+            name = self._card_escape(task.get("task_name") or "未命名")
+            account = self._card_escape(account_map.get(account_id, f"账号{account_id}"))
+            status = self._card_escape(task.get("status") or "idle")
+            action_type = self._card_escape(config.get("action_type") or "-")
+            target = self._card_escape(config.get("target_directory") or config.get("target_root") or "-")
+            elements.extend(
+                [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": (
+                                f"**{name}**\n"
+                                f"ID：`{task_id}`\n账号：{account} ｜ 状态：{status}\n模式：{action_type} ｜ 目标：{target}"
+                            ),
+                        },
+                    },
+                    {
+                        "tag": "action",
+                        "actions": [self._card_button("执行整理", "primary", f"organize run {task_id}")],
+                    },
+                    {"tag": "hr"},
+                ]
+            )
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("执行全部整理", "danger", "organize run all"),
+                    self._card_button("查看状态", "default", "status"),
+                ],
+            }
+        )
+        return self._base_card("LitePan 媒体整理任务", "orange", elements)
+
+    def _build_help_card(self) -> Dict[str, Any]:
+        commands = [
+            ("账号", f"{self._prefix} 账号", "卡片展示全部账号，并提供刷新/入库按钮。"),
+            ("缓存", f"{self._prefix} 缓存", "卡片展示缓存保持任务，并提供立即刷新按钮。"),
+            ("STRM", f"{self._prefix} strm", "卡片展示 STRM 任务，并提供自动/全量/分支触发按钮。"),
+            ("整理", f"{self._prefix} 整理", "卡片展示媒体整理任务，并提供执行按钮。"),
+            ("刷新", f"{self._prefix} 刷新 <account_id|all>", "只刷新网盘目录缓存，不自动生成 STRM。"),
+            ("入库", f"{self._prefix} 入库 <account_id|all>", "先刷新网盘，再触发该账号 STRM 生成。"),
+            ("状态", f"{self._prefix} 状态", "查看缓存保持、STRM、媒体整理运行状态。"),
+        ]
+        elements: List[Dict[str, Any]] = []
+        for title, command, desc in commands:
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": f"**{title}**\n`{command}`\n{desc}"},
+                }
+            )
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("账号列表", "primary", "accounts"),
+                    self._card_button("缓存任务", "default", "cache"),
+                    self._card_button("STRM 任务", "default", "strm"),
+                    self._card_button("整理任务", "default", "organize"),
+                    self._card_button("查看状态", "default", "status"),
+                ],
+            }
+        )
+        return self._base_card("LitePan 控制台", "blue", elements)
+
+    def _build_status_card(self, status: Dict[str, int]) -> Dict[str, Any]:
+        elements = [
+            {
+                "tag": "div",
+                "fields": [
+                    {
+                        "is_short": True,
+                        "text": {"tag": "lark_md", "content": f"**缓存保持运行中**\n{status['cache_running']}"},
+                    },
+                    {
+                        "is_short": True,
+                        "text": {"tag": "lark_md", "content": f"**STRM 运行中**\n{status['strm_running']}"},
+                    },
+                    {
+                        "is_short": True,
+                        "text": {"tag": "lark_md", "content": f"**STRM 队列中**\n{status['strm_queued']}"},
+                    },
+                    {
+                        "is_short": True,
+                        "text": {"tag": "lark_md", "content": f"**媒体整理运行中**\n{status['media_running']}"},
+                    },
+                ],
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    self._card_button("账号列表", "primary", "accounts"),
+                    self._card_button("缓存任务", "default", "cache"),
+                    self._card_button("STRM 任务", "default", "strm"),
+                    self._card_button("整理任务", "default", "organize"),
+                ],
+            },
+        ]
+        return self._base_card("LitePan 任务状态", "green", elements)
+
+    def _base_card(self, title: str, template: str, elements: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {"template": template, "title": {"tag": "plain_text", "content": title}},
+            "elements": elements,
+        }
+
+    def _card_button(self, text: str, button_type: str, command: str) -> Dict[str, Any]:
+        return {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": text},
+            "type": button_type,
+            "value": {"litepan_command": command},
+        }
+
+    def _card_escape(self, value: Any) -> str:
+        return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    def _json_dict(self, value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(str(value or "{}"))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     def _format_refresh_account_result(self, result: RefreshAccountResult) -> str:
         label = result.account_name or f"账号{result.account_id}"
@@ -646,30 +1147,41 @@ class FeishuBotService:
     def _help_text(self) -> str:
         return (
             "LitePan 飞书命令：\n"
-            f"- {self._prefix} accounts\n"
-            f"- {self._prefix} refresh account <account_id>\n"
-            f"- {self._prefix} refresh all\n"
+            f"- {self._prefix} 账号\n"
+            f"- {self._prefix} 刷新 <account_id|all>\n"
             f"- {self._prefix} 入库 <account_id|all>\n"
-            f"- {self._prefix} status\n"
+            f"- {self._prefix} 状态\n"
             f"- {self._prefix} cache run <config_id|all>\n"
             f"- {self._prefix} strm run <task_id|all> [auto|full|branch]\n"
             f"- {self._prefix} organize run <task_id>"
         )
 
-    async def _reply(self, chat_id: str, text: str) -> None:
+    async def _reply(self, chat_id: str, response: Union[str, FeishuBotResponse]) -> None:
         if not chat_id or not self._client:
             return
+        bot_response = response if isinstance(response, FeishuBotResponse) else FeishuBotResponse(text=str(response))
+        if bot_response.card:
+            sent = await self._send_message(chat_id, "interactive", json.dumps(bot_response.card, ensure_ascii=False))
+            if sent:
+                return
+            if not bot_response.text:
+                bot_response.text = "卡片发送失败。"
+        text = bot_response.text or ""
+        if not text:
+            return
+        await self._send_message(chat_id, "text", json.dumps({"text": text}, ensure_ascii=False))
+
+    async def _send_message(self, chat_id: str, msg_type: str, content: str) -> bool:
         try:
             from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
-            content = json.dumps({"text": text}, ensure_ascii=False)
             request = (
                 CreateMessageRequest.builder()
                 .receive_id_type("chat_id")
                 .request_body(
                     CreateMessageRequestBody.builder()
                     .receive_id(chat_id)
-                    .msg_type("text")
+                    .msg_type(msg_type)
                     .content(content)
                     .build()
                 )
@@ -679,9 +1191,11 @@ class FeishuBotService:
             success = getattr(response, "success", lambda: False)
             ok = success() if callable(success) else bool(success)
             if not ok:
-                self._logger.warning(f"飞书消息回复失败: {getattr(response, 'msg', '')}")
+                self._logger.warning(f"飞书消息回复失败: type={msg_type} msg={getattr(response, 'msg', '')}")
+            return ok
         except Exception as e:
-            self._logger.warning(f"飞书消息回复异常: {e}")
+            self._logger.warning(f"飞书消息回复异常: type={msg_type} error={e}")
+            return False
 
 
 feishu_bot_service = FeishuBotService()
