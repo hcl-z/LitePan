@@ -3,15 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="light">
-  <title>LitePan V3.1 - 轻量级网盘挂载系统</title>
+  <meta name="color-scheme" content="light dark">
+  <title>LitePan - 轻量级网盘挂载系统</title>
   <link rel="icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/css/all.min.css">
-  <script type="module" crossorigin src="/assets/main-97IDFDCB.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/vendor-CVFEPmGb.js">
-  <link rel="stylesheet" crossorigin href="/assets/main-DNso_XKa.css">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("litepan-theme") || "light";
+        var resolved = theme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : theme;
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.classList.toggle("dark", resolved === "dark");
+      } catch (error) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/main-BKvtl0VS.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/vendor-DUIscIz4.js">
+  <link rel="modulepreload" crossorigin href="/assets/radix-C0JSg1zF.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-CedHhcow.css">
 </head>
 <body>
-  <div id="app"></div>
+  <div id="root"></div>
 </body>
-</html> 
+</html>

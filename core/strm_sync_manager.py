@@ -20,6 +20,7 @@ from core.strm_security import (
     decode_strm_file_key,
     sign_strm_path,
 )
+from core.media_library_notifier import media_library_notifier
 from database.db import db
 
 
@@ -1975,6 +1976,18 @@ class StrmSyncManager:
 
             self._logger.debug(
                 f"STRM任务完成: {task.name} mode={'branch' if use_branch_check else 'full'} account={task.account_id} path={task.path} files={task.file_count} created={created_count} updated={updated_count} deleted={deleted_count} skipped_conflict={conflict_skipped_count} metadata={metadata_created_count} duration_ms={task.last_duration_ms}"
+            )
+            await media_library_notifier.notify_after_strm_generated(
+                {
+                    "task_id": task.id,
+                    "task_name": task.name,
+                    "account_id": task.account_id,
+                    "path": task.path,
+                    "created": created_count,
+                    "updated": updated_count,
+                    "deleted": deleted_count,
+                    "metadata_created": metadata_created_count,
+                }
             )
 
         except asyncio.CancelledError:

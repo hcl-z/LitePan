@@ -36,6 +36,7 @@ plugins/
 .env.*
 
 # 临时与备份文件
+.playwright-mcp/
 *.bak
 *.bak.*
 *.bak*
@@ -62,5 +63,3 @@ plugins/
 AGENTS.md
 CLAUDE.md
 LITEPAN_SYSTEM_MAP.md
-
-
