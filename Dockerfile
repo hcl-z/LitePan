@@ -4,11 +4,13 @@ ENV NODE_ENV=development
 
 WORKDIR /build/web
 
-COPY web/package.json web/package-lock.json ./
-RUN npm config set registry https://registry.npmmirror.com && npm ci --include=dev
+RUN npm install -g pnpm
+
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm config set registry https://registry.npmmirror.com && pnpm install --frozen-lockfile
 
 COPY web/ ./
-RUN npm run build
+RUN pnpm run build
 
 
 FROM python:3.11-slim AS runtime
