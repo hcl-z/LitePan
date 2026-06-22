@@ -153,6 +153,10 @@ async def lifespan(_app: FastAPI):
 
     await emby_proxy_server_manager.initialize()
 
+    from core.feishu_bot import feishu_bot_service
+
+    await feishu_bot_service.start()
+
     system_log = get_writer(LogModule.SYSTEM)
     system_log.info(f"🎉 {APP_NAME} 启动完成！")
 
@@ -174,6 +178,7 @@ async def lifespan(_app: FastAPI):
         from core.auth_manager import stop_auth_system
         from core.cache_retention_manager import cache_retention_manager
         from core.emby_proxy_server import emby_proxy_server_manager
+        from core.feishu_bot import feishu_bot_service
         from core.plugin_system import plugin_manager
         from core.strm_sync_manager import strm_sync_manager
         from core.upload_task_manager import upload_task_manager
@@ -185,6 +190,7 @@ async def lifespan(_app: FastAPI):
             (
                 ("停止缓存保持管理器", cache_retention_manager.stop, "缓存保持管理器已停止"),
                 ("停止STRM同步管理器", strm_sync_manager.stop, "STRM同步管理器已停止"),
+                ("停止飞书机器人", feishu_bot_service.stop, "飞书机器人已停止"),
                 ("停止Emby反代监听", emby_proxy_server_manager.shutdown, "Emby反代监听已停止"),
                 ("停止插件系统", plugin_manager.shutdown, "插件系统已停止"),
                 ("停止认证系统", stop_auth_system, "认证系统已停止"),

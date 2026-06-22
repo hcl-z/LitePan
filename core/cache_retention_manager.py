@@ -839,6 +839,9 @@ class CacheRetentionManager:
     def get_all_tasks_status(self) -> List[Dict]:
         return [self.get_task_status(task_id) for task_id in self._tasks.keys()]
 
+    def get_running_task_ids(self) -> Set[int]:
+        return set(self._running_tasks)
+
     def get_running_account_ids(self) -> Set[int]:
         """返回当前正在执行任务的账号 ID 集合，供 STRM 管理器跨管理器互斥。"""
         account_ids: Set[int] = set()

@@ -77,6 +77,12 @@ class Settings:
     MO_ALIGN_MEDIA_TAGS: bool = False
     MO_MAX_WORKS_PER_RUN: int = 50
     MO_OVERWRITE_EXISTING: bool = False
+    FEISHU_BOT_ENABLED: bool = False
+    FEISHU_APP_ID: str = ""
+    FEISHU_APP_SECRET: str = ""
+    FEISHU_ALLOWED_CHAT_IDS: str = ""
+    FEISHU_ALLOWED_USER_IDS: str = ""
+    FEISHU_COMMAND_PREFIX: str = "/lp"
 
     @classmethod
     def get_default_value(cls, key: str) -> Any:
@@ -130,6 +136,43 @@ class Settings:
                 "description": "后台返回首页入口方式",
                 "category": "system",
                 "default": cls.ADMIN_HOME_RETURN_MODE
+            },
+            "feishu_bot_enabled": {
+                "type": "boolean",
+                "description": "是否启用飞书机器人",
+                "category": "system",
+                "default": cls.FEISHU_BOT_ENABLED
+            },
+            "feishu_app_id": {
+                "type": "string",
+                "description": "飞书应用 App ID",
+                "category": "system",
+                "default": cls.FEISHU_APP_ID
+            },
+            "feishu_app_secret": {
+                "type": "password",
+                "description": "飞书应用 App Secret",
+                "category": "system",
+                "sensitive": True,
+                "default": cls.FEISHU_APP_SECRET
+            },
+            "feishu_allowed_chat_ids": {
+                "type": "string",
+                "description": "允许使用机器人的飞书群 ID（逗号/分号分隔）",
+                "category": "system",
+                "default": cls.FEISHU_ALLOWED_CHAT_IDS
+            },
+            "feishu_allowed_user_ids": {
+                "type": "string",
+                "description": "允许使用机器人的飞书用户 ID/open_id（逗号/分号分隔）",
+                "category": "system",
+                "default": cls.FEISHU_ALLOWED_USER_IDS
+            },
+            "feishu_command_prefix": {
+                "type": "string",
+                "description": "飞书机器人命令前缀",
+                "category": "system",
+                "default": cls.FEISHU_COMMAND_PREFIX
             },
             "strm_base_url": {
                 "type": "string",

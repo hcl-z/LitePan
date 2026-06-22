@@ -10,3 +10,4 @@ guessit
 tmdbsimple
 PySocks
 pycryptodome
+lark-oapi

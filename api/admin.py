@@ -1133,6 +1133,52 @@ async def recalculate_scheduler(session_data: dict = Depends(require_admin_auth)
 async def test_credentials(session_data: dict = Depends(require_admin_auth)):
     return _success_response(message="路由工作正常")
 
+@router.post("/feishu/test")
+async def test_feishu_connection(
+    request: Request,
+    session_data: dict = Depends(require_admin_auth),
+):
+    try:
+        payload = await request.json()
+        from config import config_manager
+
+        app_id = str(payload.get("feishu_app_id") or await config_manager.get_async("feishu_app_id") or "").strip()
+        app_secret = str(payload.get("feishu_app_secret") or await config_manager.get_async("feishu_app_secret") or "").strip()
+        if not app_id or not app_secret:
+            return _error_response(message="请填写飞书 App ID 和 App Secret 后再测试")
+
+        try:
+            import lark_oapi as lark
+            from lark_oapi.api.application.v6 import GetApplicationRequest
+        except Exception as e:
+            return _error_response(message=f"飞书 SDK 不可用，请先安装 lark-oapi: {e}")
+
+        client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+        req = GetApplicationRequest.builder().app_id(app_id).build()
+        resp = await client.application.v6.application.aget(req)
+        success = getattr(resp, "success", lambda: False)
+        ok = success() if callable(success) else bool(success)
+        if not ok:
+            return _error_response(message=f"飞书连接测试失败: {getattr(resp, 'msg', '') or getattr(resp, 'code', '')}")
+
+        data = {}
+        try:
+            body = getattr(resp, "data", None)
+            if body is not None:
+                data = lark.JSON.marshal(body)
+                data = lark.JSON.unmarshal(data, dict)
+        except Exception:
+            data = {}
+        return _success_response(
+            data={
+                "app_id": app_id,
+                "application": data,
+            },
+            message="飞书连接测试通过",
+        )
+    except Exception as e:
+        return _error_response(message=f"飞书连接测试失败: {str(e)}")
+
 @router.post("/dashboard/ack-errors")
 async def ack_dashboard_errors(session_data: dict = Depends(require_admin_auth)):
     """仪表盘"标记错误已读"。
@@ -1165,6 +1211,7 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
         webdav_cache_enabled = await config_manager.get_async('webdav_cache_enabled')
         auth_active_refresh_enabled = await config_manager.get_async('auth_active_refresh_enabled')
         public_index_enabled = await config_manager.get_async('public_index_enabled')
+        feishu_bot_enabled = await config_manager.get_async('feishu_bot_enabled')
         index_account_switch_mode = await config_manager.get_async('index_account_switch_mode') or "dropdown"
         if index_account_switch_mode not in {"dropdown", "floating"}:
             index_account_switch_mode = "dropdown"
@@ -1183,6 +1230,7 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
         
         admin_username = await config_manager.get_async('admin_username') or "admin"
         admin_password = await config_manager.get_async('admin_password') or "admin"
+        feishu_app_secret = await config_manager.get_async('feishu_app_secret') or ""
         credential_state = assess_admin_credential_state(admin_username, admin_password)
 
         return _success_response(
@@ -1197,6 +1245,12 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
                 "upload_task_concurrency": await config_manager.get_async('upload_task_concurrency') or 3,
                 "log_retention_days": await config_manager.get_async('log_retention_days') or 30,
                 "auth_active_refresh_enabled": normalize_bool(auth_active_refresh_enabled, True),
+                "feishu_bot_enabled": normalize_bool(feishu_bot_enabled, False),
+                "feishu_app_id": await config_manager.get_async('feishu_app_id') or "",
+                "feishu_app_secret_configured": bool(str(feishu_app_secret).strip()),
+                "feishu_allowed_chat_ids": await config_manager.get_async('feishu_allowed_chat_ids') or "",
+                "feishu_allowed_user_ids": await config_manager.get_async('feishu_allowed_user_ids') or "",
+                "feishu_command_prefix": await config_manager.get_async('feishu_command_prefix') or "/lp",
                 "must_change_password": credential_state["must_change_password"],
                 "password_change_reason": credential_state["password_change_reason"],
                 "webdav_enabled": normalize_bool(webdav_enabled, True),
@@ -1245,6 +1299,12 @@ async def update_admin_credentials(
         upload_task_concurrency = credentials_data.get('upload_task_concurrency')
         log_retention_days = credentials_data.get('log_retention_days')
         auth_active_refresh_enabled = credentials_data.get('auth_active_refresh_enabled')
+        feishu_bot_enabled = credentials_data.get('feishu_bot_enabled')
+        feishu_app_id = (credentials_data.get('feishu_app_id') or '').strip()
+        feishu_app_secret = (credentials_data.get('feishu_app_secret') or '').strip()
+        feishu_allowed_chat_ids = (credentials_data.get('feishu_allowed_chat_ids') or '').strip()
+        feishu_allowed_user_ids = (credentials_data.get('feishu_allowed_user_ids') or '').strip()
+        feishu_command_prefix = (credentials_data.get('feishu_command_prefix') or '/lp').strip()
         index_account_switch_mode = credentials_data.get('index_account_switch_mode')
         admin_home_return_mode = credentials_data.get('admin_home_return_mode')
         theme = credentials_data.get('theme')
@@ -1259,6 +1319,7 @@ async def update_admin_credentials(
         from config import config_manager
 
         current_admin_password = await config_manager.get_async('admin_password') or "admin"
+        current_feishu_app_secret = str(await config_manager.get_async('feishu_app_secret') or "").strip()
         current_credential_state = assess_admin_credential_state(username, current_admin_password)
 
         # 前端传小时，存库按秒
@@ -1288,6 +1349,16 @@ async def update_admin_credentials(
         if theme is not None and theme not in {"light", "dark", "auto"}:
             return _error_response(message="界面主题不正确")
 
+        if feishu_command_prefix and not feishu_command_prefix.startswith("/"):
+            return _error_response(message="飞书命令前缀必须以 / 开头，例如 /lp")
+
+        normalized_feishu_enabled = normalize_bool(feishu_bot_enabled, False)
+        if normalized_feishu_enabled:
+            if not feishu_app_id or not (feishu_app_secret or current_feishu_app_secret):
+                return _error_response(message="启用飞书机器人时必须填写 App ID 和 App Secret")
+            if not feishu_allowed_chat_ids and not feishu_allowed_user_ids:
+                return _error_response(message="启用飞书机器人时必须至少填写一个允许的群 ID 或用户 ID")
+
         async def apply_upload_task_concurrency():
             if upload_task_concurrency is None:
                 return
@@ -1308,6 +1379,16 @@ async def update_admin_credentials(
             await config_manager.set_async('auth_active_refresh_enabled', normalized_enabled)
             from core.auth_manager import auth_scheduler
             await auth_scheduler.set_active_refresh_enabled(normalized_enabled)
+
+        async def apply_feishu_bot_settings():
+            if feishu_bot_enabled is not None:
+                await config_manager.set_async('feishu_bot_enabled', normalized_feishu_enabled)
+            await config_manager.set_async('feishu_app_id', feishu_app_id)
+            if feishu_app_secret:
+                await config_manager.set_async('feishu_app_secret', feishu_app_secret)
+            await config_manager.set_async('feishu_allowed_chat_ids', feishu_allowed_chat_ids)
+            await config_manager.set_async('feishu_allowed_user_ids', feishu_allowed_user_ids)
+            await config_manager.set_async('feishu_command_prefix', feishu_command_prefix or '/lp')
 
         async def apply_index_account_switch_mode():
             if index_account_switch_mode is None:
@@ -1346,6 +1427,7 @@ async def update_admin_credentials(
             await apply_public_index_enabled_setting()
             await apply_upload_task_concurrency()
             await apply_auth_active_refresh_setting()
+            await apply_feishu_bot_settings()
             await apply_index_account_switch_mode()
             await apply_admin_home_return_mode()
             await apply_theme()
@@ -1378,6 +1460,7 @@ async def update_admin_credentials(
         await apply_public_index_enabled_setting()
         await apply_upload_task_concurrency()
         await apply_auth_active_refresh_setting()
+        await apply_feishu_bot_settings()
         await apply_index_account_switch_mode()
         await apply_admin_home_return_mode()
         await apply_theme()

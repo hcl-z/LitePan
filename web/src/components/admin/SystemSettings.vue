@@ -121,6 +121,97 @@
             </label>
           </div>
         </div>
+        <div class="settings-group">
+          <div class="group-title"><i class="fas fa-robot"></i> 飞书机器人</div>
+          <div class="group-item">
+            <div class="group-label with-help">
+              <span>启用飞书机器人</span>
+              <span class="help-icon" @mouseover="feishuBotTooltipVisible = true" @mouseleave="feishuBotTooltipVisible = false">
+                <i class="fas fa-question-circle"></i>
+                <div class="tooltip" v-show="feishuBotTooltipVisible">
+                  <div class="tooltip-content">
+                    <div class="tooltip-title">飞书机器人说明</div>
+                    <div class="tooltip-body">
+                      <p>启用后，LitePan 会通过飞书长连接接收机器人消息，无需暴露公网回调地址。</p>
+                      <p>机器人只会执行白名单群或用户发出的命令；白名单为空时会拒绝命令。</p>
+                    </div>
+                  </div>
+                </div>
+              </span>
+            </div>
+            <label class="inline-switch" for="feishu_bot_enabled">
+              <input
+                id="feishu_bot_enabled"
+                v-model="settings.feishu_bot_enabled"
+                type="checkbox"
+              >
+              <span class="inline-switch-slider"></span>
+            </label>
+          </div>
+          <div class="group-item">
+            <div class="group-label">App ID</div>
+            <input
+              type="text"
+              id="feishu_app_id"
+              v-model.trim="settings.feishu_app_id"
+              class="group-input"
+              placeholder="cli_xxx"
+              autocomplete="off"
+            >
+          </div>
+          <div class="group-item">
+            <div class="group-label">App Secret</div>
+            <div class="input-action-row">
+              <input
+                type="password"
+                id="feishu_app_secret"
+                v-model.trim="settings.feishu_app_secret"
+                class="group-input"
+                :placeholder="settings.feishu_app_secret_configured ? '已配置，留空表示不修改' : '飞书应用 App Secret'"
+                autocomplete="new-password"
+              >
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :disabled="testingFeishu"
+                @click="testFeishuConnection"
+              >
+                <i class="fas fa-plug"></i>
+                <span>{{ testingFeishu ? '测试中...' : '测试连接' }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="group-item">
+            <div class="group-label">命令前缀</div>
+            <input
+              type="text"
+              id="feishu_command_prefix"
+              v-model.trim="settings.feishu_command_prefix"
+              class="group-input"
+              placeholder="/lp"
+            >
+          </div>
+          <div class="group-item">
+            <div class="group-label">允许的群 ID</div>
+            <textarea
+              id="feishu_allowed_chat_ids"
+              v-model.trim="settings.feishu_allowed_chat_ids"
+              class="group-input group-textarea"
+              rows="3"
+              placeholder="oc_xxx，可用逗号、分号、空格或换行分隔"
+            ></textarea>
+          </div>
+          <div class="group-item">
+            <div class="group-label">允许的用户 ID</div>
+            <textarea
+              id="feishu_allowed_user_ids"
+              v-model.trim="settings.feishu_allowed_user_ids"
+              class="group-input group-textarea"
+              rows="3"
+              placeholder="ou_xxx 或 user_id，可用逗号、分号、空格或换行分隔"
+            ></textarea>
+          </div>
+        </div>
       </form>
     </div>
 
@@ -292,12 +383,14 @@ const emit = defineEmits(['password-updated', 'settings-updated'])
 // 响应式数据
 const currentSettingsTab = ref('security')
 const savingSettings = ref(false)
+const testingFeishu = ref(false)
 const newPassword = ref('')
 const confirmPassword = ref('')
 const confirmPasswordTouched = ref(false)
 const oauthServerUrlTooltipVisible = ref(false)
 const publicIndexTooltipVisible = ref(false)
 const authActiveRefreshTooltipVisible = ref(false)
+const feishuBotTooltipVisible = ref(false)
 
 const settings = reactive({
   admin_username: '',
@@ -308,7 +401,14 @@ const settings = reactive({
   admin_home_return_mode: 'top_icon',
   upload_task_concurrency: 3,
   log_retention_days: 30,
-  auth_active_refresh_enabled: true
+  auth_active_refresh_enabled: true,
+  feishu_bot_enabled: false,
+  feishu_app_id: '',
+  feishu_app_secret: '',
+  feishu_app_secret_configured: false,
+  feishu_allowed_chat_ids: '',
+  feishu_allowed_user_ids: '',
+  feishu_command_prefix: '/lp'
 })
 
 // 计算属性
@@ -352,6 +452,13 @@ const loadSystemConfig = async () => {
       settings.upload_task_concurrency = config.upload_task_concurrency || 3
       settings.log_retention_days = config.log_retention_days || 30
       settings.auth_active_refresh_enabled = config.auth_active_refresh_enabled ?? true
+      settings.feishu_bot_enabled = config.feishu_bot_enabled ?? false
+      settings.feishu_app_id = config.feishu_app_id || ''
+      settings.feishu_app_secret = ''
+      settings.feishu_app_secret_configured = config.feishu_app_secret_configured ?? false
+      settings.feishu_allowed_chat_ids = config.feishu_allowed_chat_ids || ''
+      settings.feishu_allowed_user_ids = config.feishu_allowed_user_ids || ''
+      settings.feishu_command_prefix = config.feishu_command_prefix || '/lp'
       if (props.forcePasswordChange || config.must_change_password) {
         currentSettingsTab.value = 'security'
       }
@@ -415,10 +522,27 @@ const saveSecuritySettings = async () => {
     window.appNotification.error('日志保留天数必须是 1-365 之间的整数')
     return
   }
+
+  if (settings.feishu_command_prefix && !settings.feishu_command_prefix.startsWith('/')) {
+    window.appNotification.error('飞书命令前缀必须以 / 开头，例如 /lp')
+    return
+  }
+
+  if (settings.feishu_bot_enabled) {
+    if (!settings.feishu_app_id || (!settings.feishu_app_secret && !settings.feishu_app_secret_configured)) {
+      window.appNotification.error('启用飞书机器人时必须填写 App ID 和 App Secret')
+      return
+    }
+    if (!settings.feishu_allowed_chat_ids && !settings.feishu_allowed_user_ids) {
+      window.appNotification.error('启用飞书机器人时必须至少填写一个允许的群 ID 或用户 ID')
+      return
+    }
+  }
   
   savingSettings.value = true
   try {
     const payload = { ...settings }
+    delete payload.feishu_app_secret_configured
     if (newPassword.value) {
       payload.admin_password = newPassword.value
     }
@@ -451,6 +575,29 @@ const saveSecuritySettings = async () => {
     window.appNotification.error('保存失败: ' + error.message)
   } finally {
     savingSettings.value = false
+  }
+}
+
+const testFeishuConnection = async () => {
+  if (!settings.feishu_app_id || (!settings.feishu_app_secret && !settings.feishu_app_secret_configured)) {
+    window.appNotification.error('请先填写 App ID 和 App Secret')
+    return
+  }
+  testingFeishu.value = true
+  try {
+    const response = await axios.post('/api/admin/feishu/test', {
+      feishu_app_id: settings.feishu_app_id,
+      feishu_app_secret: settings.feishu_app_secret
+    })
+    if (response.data?.success) {
+      window.appNotification.success(response.data.message || '飞书连接测试通过')
+    } else {
+      window.appNotification.error(response.data?.message || '飞书连接测试失败')
+    }
+  } catch (error) {
+    window.appNotification.error('飞书连接测试失败: ' + (error.response?.data?.message || error.message))
+  } finally {
+    testingFeishu.value = false
   }
 }
 
@@ -743,6 +890,19 @@ const saveSecuritySettings = async () => {
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1) !important;
 }
 
+.group-textarea {
+  resize: vertical;
+  min-height: 88px;
+  line-height: 1.5;
+}
+
+.input-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .mode-segment {
   --segment-count: 2;
   --segment-item-width: 210px;
@@ -871,6 +1031,18 @@ const saveSecuritySettings = async () => {
   background: linear-gradient(135deg, #3b5bdb, #1e88e5);
   color: #fff;
   box-shadow: 0 4px 12px rgba(76, 116, 223, 0.4);
+}
+
+.btn-secondary {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+.btn-secondary:hover {
+  background: #eef2ff;
+  color: #1e40af;
+  border-color: #c7d2fe;
 }
 
 .btn:disabled {
