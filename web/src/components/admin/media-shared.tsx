@@ -206,9 +206,11 @@ export function SelectField({ label, value, options, onChange }: { label: string
 
 export function SwitchField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <div className="flex h-10 items-center justify-between rounded-md border px-3">
+    <div className="grid gap-2">
       <Label>{label}</Label>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <div className="flex h-10 items-center rounded-md border px-3">
+        <Switch checked={checked} onCheckedChange={onChange} />
+      </div>
     </div>
   )
 }

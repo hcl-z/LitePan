@@ -379,9 +379,11 @@ function NumberField({ label, value, min, max, onChange }: { label: string; valu
 
 function SwitchField({ label, checked, onCheckedChange }: { label: string; checked: boolean; onCheckedChange: (value: boolean) => void }) {
   return (
-    <div className="flex h-10 items-center justify-between rounded-md border px-3">
+    <div className="grid gap-2">
       <Label>{label}</Label>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <div className="flex h-10 items-center rounded-md border px-3">
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </div>
     </div>
   )
 }
