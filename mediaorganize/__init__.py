@@ -1,5 +1,10 @@
 from mediaorganize import rules
-from mediaorganize.planner import Plan, PlanAction, Planner, search_tmdb_async, validate_tmdb_connection, build_proxy_url
+from mediaorganize.tmdb import (
+    search_tmdb_async,
+    validate_tmdb_connection,
+    build_proxy_url,
+)
+from mediaorganize.planner import Plan, PlanAction, Planner
 from mediaorganize.executor import Executor
 from mediaorganize.manager import (
     plan_task,
