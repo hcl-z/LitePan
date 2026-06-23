@@ -4,6 +4,7 @@ import { Check, Eye, FileText, Film, ListChecks, MoreHorizontal, Pencil, Plus, R
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -17,7 +18,7 @@ import { adminApi, getMessage } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
 import type { Account, MediaOrganizeTask } from "@/types/api"
 import {
-  Metric, PlanMetric, PlanProgress, PlanSection, RunResultSummary,
+  PlanMetric, PlanProgress, PlanSection, RunResultSummary,
   TextField, NumberField, SelectField, SwitchField,
   isActiveMediaStatus, asRecord, asStringArray, normalizePlan, planActionMeta,
   type MediaLogEntry, type MediaRunResult, type MediaPlanAction, type MediaPlan,
@@ -161,45 +162,50 @@ export function MediaOrganizePanel() {
 
       {message ? <div className="rounded-md border bg-muted px-3 py-2 text-sm">{message}</div> : null}
 
-      <div className="grid gap-3 md:grid-cols-1">
-        <Metric title="整理任务" value={mediaTasks.length} />
-      </div>
-
-      <Card className="overflow-hidden">
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-base">媒体整理任务</CardTitle>
-          <Dialog open={mediaDialogOpen} onOpenChange={(open) => {
-            setMediaDialogOpen(open)
-            if (!open) setEditingMedia(null)
-          }}>
-            <DialogTrigger asChild><Button><Plus className="size-4" />新建整理任务</Button></DialogTrigger>
-            <MediaTaskDialog accounts={accounts} task={editingMedia} onSaved={async (text) => {
-              setMediaDialogOpen(false)
-              setEditingMedia(null)
-              setMessage(text)
-              await load()
-            }} />
-          </Dialog>
-        </CardHeader>
-        <MediaTaskTable
-          tasks={mediaTasks}
-          onPlan={setPlanTask}
-          onLogs={setLogsTask}
-          onRun={runMediaTask}
-          onApply={applyMediaPlanFromTable}
-          onStop={stopMediaTask}
-          onDelete={async (task) => {
-            const ok = await confirm({ title: "删除该媒体整理任务？", confirmText: "删除", destructive: true })
-            if (ok) await action(() => adminApi.deleteMediaTask(task.id), "任务已删除")
-          }}
-          onEdit={(task) => {
-            setEditingMedia(task)
-            setMediaDialogOpen(true)
-          }}
-        />
-      </Card>
-
-      <MediaSettings settings={mediaSettings} onMessage={setMessage} onReload={load} />
+      <Tabs defaultValue="tasks">
+        <TabsList>
+          <TabsTrigger value="tasks">整理任务</TabsTrigger>
+          <TabsTrigger value="settings">识别配置</TabsTrigger>
+        </TabsList>
+        <TabsContent value="tasks" className="mt-4">
+          <Card className="overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle className="text-base">媒体整理任务</CardTitle>
+              <Dialog open={mediaDialogOpen} onOpenChange={(open) => {
+                setMediaDialogOpen(open)
+                if (!open) setEditingMedia(null)
+              }}>
+                <DialogTrigger asChild><Button><Plus className="size-4" />新建整理任务</Button></DialogTrigger>
+                <MediaTaskDialog accounts={accounts} task={editingMedia} onSaved={async (text) => {
+                  setMediaDialogOpen(false)
+                  setEditingMedia(null)
+                  setMessage(text)
+                  await load()
+                }} />
+              </Dialog>
+            </CardHeader>
+            <MediaTaskTable
+              tasks={mediaTasks}
+              onPlan={setPlanTask}
+              onLogs={setLogsTask}
+              onRun={runMediaTask}
+              onApply={applyMediaPlanFromTable}
+              onStop={stopMediaTask}
+              onDelete={async (task) => {
+                const ok = await confirm({ title: "删除该媒体整理任务？", confirmText: "删除", destructive: true })
+                if (ok) await action(() => adminApi.deleteMediaTask(task.id), "任务已删除")
+              }}
+              onEdit={(task) => {
+                setEditingMedia(task)
+                setMediaDialogOpen(true)
+              }}
+            />
+          </Card>
+        </TabsContent>
+        <TabsContent value="settings" className="mt-4">
+          <MediaSettings settings={mediaSettings} onMessage={setMessage} onReload={load} />
+        </TabsContent>
+      </Tabs>
 
       <MediaPlanDialog task={planTask} onOpenChange={(open) => !open && setPlanTask(null)} onApplied={(task) => {
         setPlanTask(null)

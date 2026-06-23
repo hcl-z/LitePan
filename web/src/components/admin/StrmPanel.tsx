@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { MoreHorizontal, Plus, RefreshCw, Save, Square, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -91,29 +92,39 @@ export function StrmPanel() {
         <Metric title="STRM 任务" value={strmTasks.length} />
         <Metric title="STRM 基址" value={String(strmSettings.strm_base_url || "未设置")} small />
       </div>
-      <Card className="overflow-hidden">
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-base">STRM 任务</CardTitle>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => action(() => adminApi.runAllStrmTasks(), "已触发全部 STRM 任务")}>全部执行</Button>
-            <Dialog open={strmDialogOpen} onOpenChange={(open) => { setStrmDialogOpen(open); if (!open) setEditingStrm(null) }}>
-              <DialogTrigger asChild><Button><Plus className="size-4" />新建 STRM</Button></DialogTrigger>
-              <StrmTaskDialog accounts={accounts} task={editingStrm} onSaved={async (text) => {
-                setStrmDialogOpen(false); setEditingStrm(null); setMessage(text); await load()
-              }} />
-            </Dialog>
-          </div>
-        </CardHeader>
-        <TaskTable tasks={strmTasks} onBranches={setBranchesTask}
-          onDelete={async (task) => {
-            const ok = await confirm({ title: "删除该 STRM 任务？", description: "可以在后续增强中选择是否同时删除 STRM 文件。", confirmText: "删除", destructive: true })
-            if (ok) await action(() => adminApi.deleteStrmTask(task.id, false), "任务已删除")
-          }}
-          onEdit={(task) => { setEditingStrm(task); setStrmDialogOpen(true) }}
-          onAction={action}
-        />
-      </Card>
-      <StrmSettings settings={strmSettings} onMessage={setMessage} onReload={load} />
+      <Tabs defaultValue="tasks">
+        <TabsList>
+          <TabsTrigger value="tasks">STRM 任务</TabsTrigger>
+          <TabsTrigger value="settings">全局配置</TabsTrigger>
+        </TabsList>
+        <TabsContent value="tasks" className="mt-4">
+          <Card className="overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle className="text-base">STRM 任务</CardTitle>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => action(() => adminApi.runAllStrmTasks(), "已触发全部 STRM 任务")}>全部执行</Button>
+                <Dialog open={strmDialogOpen} onOpenChange={(open) => { setStrmDialogOpen(open); if (!open) setEditingStrm(null) }}>
+                  <DialogTrigger asChild><Button><Plus className="size-4" />新建 STRM</Button></DialogTrigger>
+                  <StrmTaskDialog accounts={accounts} task={editingStrm} onSaved={async (text) => {
+                    setStrmDialogOpen(false); setEditingStrm(null); setMessage(text); await load()
+                  }} />
+                </Dialog>
+              </div>
+            </CardHeader>
+            <TaskTable tasks={strmTasks} onBranches={setBranchesTask}
+              onDelete={async (task) => {
+                const ok = await confirm({ title: "删除该 STRM 任务？", description: "可以在后续增强中选择是否同时删除 STRM 文件。", confirmText: "删除", destructive: true })
+                if (ok) await action(() => adminApi.deleteStrmTask(task.id, false), "任务已删除")
+              }}
+              onEdit={(task) => { setEditingStrm(task); setStrmDialogOpen(true) }}
+              onAction={action}
+            />
+          </Card>
+        </TabsContent>
+        <TabsContent value="settings" className="mt-4">
+          <StrmSettings settings={strmSettings} onMessage={setMessage} onReload={load} />
+        </TabsContent>
+      </Tabs>
       <StrmBranchesDialog task={branchesTask} onOpenChange={(open) => !open && setBranchesTask(null)} />
     </div>
   )
