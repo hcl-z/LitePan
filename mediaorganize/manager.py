@@ -122,6 +122,7 @@ async def _load_settings_dict() -> Dict[str, Any]:
         "mo_proxy_username": "proxy_username",
         "mo_proxy_password": "proxy_password",
         "mo_tmdb_api_key": "tmdb_api_key",
+        "mo_tmdb_base_url": "tmdb_base_url",
         "mo_tmdb_language": "tmdb_language",
         "mo_api_request_interval_ms": "api_request_interval_ms",
         "mo_ffprobe_request_interval_ms": "ffprobe_request_interval_ms",
@@ -432,7 +433,6 @@ async def delete_plan_action(task_id: str, action_id: str) -> Dict[str, Any]:
     await _save_plan(task_id, plan)
     return {"removed": action_id}
 
-
 async def delete_plan_actions(task_id: str, action_ids: List[str]) -> Dict[str, Any]:
     """批量从计划中移除整理动作：单次读写，规则同 delete_plan_action（仅 relocate 且未执行）。"""
     plan = await _load_plan(task_id)
@@ -450,3 +450,31 @@ async def delete_plan_actions(task_id: str, action_ids: List[str]) -> Dict[str, 
         plan.actions = [a for a in plan.actions if a.id not in removable]
         await _save_plan(task_id, plan)
     return {"removed": list(removable), "skipped": skipped}
+
+
+_task_name_cache: Dict[str, str] = {}
+
+
+def get_all_running_progress():
+    """Return list of (task_id, task_name, progress_dict, status) for all active tasks."""
+    from database.db import db
+    result = []
+    for task_id, runner in list(_running_tasks.items()):
+        if runner and not runner.done():
+            progress = dict(_task_progress.get(task_id, {}))
+            # status: planning or running, derived from progress stage
+            stage = progress.get("stage", "")
+            status = "planning" if stage in ("scanning", "planning", "") else "running"
+            name = _task_name_cache.get(task_id, task_id)
+            result.append((task_id, name, progress, status))
+    return result
+
+
+async def _refresh_task_name_cache() -> None:
+    """Keep task_id -> task_name cache up to date (called lazily on task start)."""
+    try:
+        rows = await db.list_media_organize_tasks()
+        for row in rows:
+            _task_name_cache[row["id"]] = row.get("task_name") or row["id"]
+    except Exception:
+        pass

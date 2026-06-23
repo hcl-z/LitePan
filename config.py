@@ -64,6 +64,7 @@ class Settings:
     MO_PROXY_USERNAME: str = ""
     MO_PROXY_PASSWORD: str = ""
     MO_TMDB_API_KEY: str = ""
+    MO_TMDB_BASE_URL: str = ""
     MO_TMDB_LANGUAGE: str = "zh-CN"
     MO_API_REQUEST_INTERVAL_MS: int = 300
     MO_FFPROBE_REQUEST_INTERVAL_MS: int = 3000
@@ -352,6 +353,9 @@ class Settings:
             },
             "mo_tmdb_api_key": {
                 "type": "password", "description": "TMDB API Key", "category": "media_organize", "sensitive": True, "default": cls.MO_TMDB_API_KEY
+            },
+            "mo_tmdb_base_url": {
+                "type": "string", "description": "TMDB API 地址（留空使用官方）", "category": "media_organize", "default": cls.MO_TMDB_BASE_URL
             },
             "mo_tmdb_language": {
                 "type": "string", "description": "TMDB 搜索语言", "category": "media_organize", "default": cls.MO_TMDB_LANGUAGE

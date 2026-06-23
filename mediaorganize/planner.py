@@ -82,6 +82,7 @@ def _search_tmdb_sync(
     api_key: str,
     proxy_url: str,
     media_type: str,
+    base_url: str = "",
 ) -> list:
     try:
         import tmdbsimple as tmdb
@@ -104,6 +105,8 @@ def _search_tmdb_sync(
         tmdb.REQUESTS_SESSION = session
         try:
             search = tmdb.Search()
+            if base_url:
+                search.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
             normalized = (media_type or "movie").lower()
             if normalized == "tv":
                 params = {"query": query, "language": language}
@@ -129,8 +132,8 @@ def _search_tmdb_sync(
             tmdb.REQUESTS_SESSION = old_session
 
 
-async def search_tmdb_async(query: str, year, language, api_key, proxy_url, media_type) -> list:
-    return await asyncio.to_thread(_search_tmdb_sync, query, year, language, api_key, proxy_url, media_type)
+async def search_tmdb_async(query: str, year, language, api_key, proxy_url, media_type, base_url="") -> list:
+    return await asyncio.to_thread(_search_tmdb_sync, query, year, language, api_key, proxy_url, media_type, base_url)
 
 
 def _lookup_tmdb_by_id_sync(
@@ -139,6 +142,7 @@ def _lookup_tmdb_by_id_sync(
     api_key: str,
     proxy_url: str,
     media_type: str,
+    base_url: str = "",
 ) -> Optional[dict]:
     try:
         import tmdbsimple as tmdb
@@ -169,26 +173,38 @@ def _lookup_tmdb_by_id_sync(
             normalized = (media_type or "movie").lower()
             try:
                 if normalized == "tv":
-                    return tmdb.TV(tid).info(language=language)
-                return tmdb.Movies(tid).info(language=language)
+                    obj = tmdb.TV(tid)
+                    if base_url:
+                        obj.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+                    return obj.info(language=language)
+                obj = tmdb.Movies(tid)
+                if base_url:
+                    obj.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+                return obj.info(language=language)
             except Exception:
                 try:
                     if normalized == "tv":
-                        return tmdb.Movies(tid).info(language=language)
-                    return tmdb.TV(tid).info(language=language)
+                        obj = tmdb.Movies(tid)
+                        if base_url:
+                            obj.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+                        return obj.info(language=language)
+                    obj = tmdb.TV(tid)
+                    if base_url:
+                        obj.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+                    return obj.info(language=language)
                 except Exception:
                     return None
         finally:
             tmdb.REQUESTS_SESSION = old_session
 
 
-async def lookup_tmdb_by_id_async(tmdb_id, language, api_key, proxy_url, media_type) -> Optional[dict]:
+async def lookup_tmdb_by_id_async(tmdb_id, language, api_key, proxy_url, media_type, base_url="") -> Optional[dict]:
     return await asyncio.to_thread(
-        _lookup_tmdb_by_id_sync, tmdb_id, language, api_key, proxy_url, media_type
+        _lookup_tmdb_by_id_sync, tmdb_id, language, api_key, proxy_url, media_type, base_url
     )
 
 
-def _fetch_tv_seasons_sync(tmdb_id: str, language: str, api_key: str, proxy_url: str) -> list:
+def _fetch_tv_seasons_sync(tmdb_id: str, language: str, api_key: str, proxy_url: str, base_url: str = "") -> list:
     try:
         import tmdbsimple as tmdb
         import requests as _requests
@@ -215,7 +231,10 @@ def _fetch_tv_seasons_sync(tmdb_id: str, language: str, api_key: str, proxy_url:
         old_session = tmdb.REQUESTS_SESSION
         tmdb.REQUESTS_SESSION = session
         try:
-            info = tmdb.TV(tid).info(language=language)
+            tv_obj = tmdb.TV(tid)
+            if base_url:
+                tv_obj.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+            info = tv_obj.info(language=language)
             seasons = info.get("seasons") if isinstance(info, dict) else None
             return list(seasons or [])
         except Exception:
@@ -224,19 +243,20 @@ def _fetch_tv_seasons_sync(tmdb_id: str, language: str, api_key: str, proxy_url:
             tmdb.REQUESTS_SESSION = old_session
 
 
-async def fetch_tv_seasons_async(tmdb_id, language, api_key, proxy_url) -> list:
+async def fetch_tv_seasons_async(tmdb_id, language, api_key, proxy_url, base_url="") -> list:
     return await asyncio.to_thread(
-        _fetch_tv_seasons_sync, tmdb_id, language, api_key, proxy_url
+        _fetch_tv_seasons_sync, tmdb_id, language, api_key, proxy_url, base_url
     )
 
 
-async def validate_tmdb_connection(api_key: str, language: str, proxy_url: str) -> bool:
-    def _check() -> bool:
+async def validate_tmdb_connection(api_key: str, language: str, proxy_url: str, base_url: str = "") -> tuple:
+    """Returns (ok: bool, error: str). error is empty string on success."""
+    def _check() -> tuple:
         try:
             import tmdbsimple as tmdb
             import requests as _requests
-        except Exception:
-            return False
+        except Exception as e:
+            return False, f"tmdbsimple 未安装: {e}"
 
         class TimeoutSession(_requests.Session):
             def request(self, method, url, **kwargs):
@@ -251,10 +271,13 @@ async def validate_tmdb_connection(api_key: str, language: str, proxy_url: str) 
             old_session = tmdb.REQUESTS_SESSION
             tmdb.REQUESTS_SESSION = session
             try:
-                tmdb.Search().movie(query="test", language=language)
-                return True
-            except Exception:
-                return False
+                search = tmdb.Search()
+                if base_url:
+                    search.base_uri = base_url.rstrip("/") + "/" + tmdb.API_VERSION
+                search.movie(query="test", language=language)
+                return True, ""
+            except Exception as e:
+                return False, str(e)
             finally:
                 tmdb.REQUESTS_SESSION = old_session
 
@@ -400,6 +423,7 @@ class Planner:
         self.use_ffprobe = bool(self.cfg.get("use_ffprobe", False))
 
         self.tmdb_api_key = self.settings.get("tmdb_api_key") or ""
+        self.tmdb_base_url = (self.settings.get("tmdb_base_url") or "").strip()
         self.tmdb_lang = self.settings.get("tmdb_language") or "zh-CN"
         self.tmdb_interval = (self.settings.get("tmdb_request_interval_ms") or 250) / 1000.0
         self.tmdb_proxy = build_proxy_url(self.settings)
@@ -766,11 +790,14 @@ class Planner:
             self.diagnostics["tmdb_status"] = "no_api_key"
             return
         self.log("[计划] 验证 TMDB 连通性...")
-        ok = await validate_tmdb_connection(self.tmdb_api_key, self.tmdb_lang, self.tmdb_proxy)
+        ok, err = await validate_tmdb_connection(self.tmdb_api_key, self.tmdb_lang, self.tmdb_proxy, self.tmdb_base_url)
         self.check_stop()
         self.tmdb_available = ok
         self.diagnostics["tmdb_status"] = "available" if ok else "unreachable"
-        self.log("[计划] TMDB 连通正常" if ok else "[计划] TMDB 无法连通，将跳过 TMDB 匹配")
+        if ok:
+            self.log("[计划] TMDB 连通正常")
+        else:
+            self.log(f"[计划] TMDB 无法连通，将跳过 TMDB 匹配: {err}")
 
     def _finalize(self) -> Plan:
         plan = Plan(
@@ -1755,7 +1782,7 @@ class Planner:
     async def _tmdb_search(self, title: str, year, group_media_type: str) -> list:
         self.check_stop()
         return await search_tmdb_async(
-            title, year, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy, group_media_type
+            title, year, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy, group_media_type, self.tmdb_base_url
         )
 
     async def _tmdb_try_match(self, title: str, year, group_media_type: str) -> Tuple[Optional[dict], list, bool, str]:
@@ -1877,7 +1904,7 @@ class Planner:
         if existing_tmdb_id:
             try:
                 info = await lookup_tmdb_by_id_async(
-                    existing_tmdb_id, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy, group_media_type
+                    existing_tmdb_id, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy, group_media_type, self.tmdb_base_url
                 )
             except Exception as e:
                 info = None
@@ -2052,7 +2079,7 @@ class Planner:
         if key in self._tv_seasons_cache:
             return self._tv_seasons_cache[key]
         seasons = await fetch_tv_seasons_async(
-            tmdb_id, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy
+            tmdb_id, self.tmdb_lang, self.tmdb_api_key, self.tmdb_proxy, self.tmdb_base_url
         )
         await asyncio.sleep(self.tmdb_interval)
         self._tv_seasons_cache[key] = seasons

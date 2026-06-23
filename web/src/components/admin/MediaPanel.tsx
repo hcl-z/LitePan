@@ -621,6 +621,8 @@ function MediaTaskDialog({ accounts, task, onSaved }: { accounts: Account[]; tas
 function MediaSettings({ settings, onMessage, onReload }: { settings: Record<string, unknown>; onMessage: (value: string) => void; onReload: () => void | Promise<void> }) {
   const [form, setForm] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testLog, setTestLog] = useState<string[]>([])
 
   useEffect(() => {
     setForm(settings || {})
@@ -643,14 +645,55 @@ function MediaSettings({ settings, onMessage, onReload }: { settings: Record<str
   }
 
   const testTmdb = async () => {
+    setTesting(true)
+    setTestLog([])
     try {
-      const response = await adminApi.testTmdb(form)
-      onMessage(response.message || "TMDB 测试完成")
-      toast.success(response.message || "TMDB 测试完成")
+      const res = await fetch("/api/admin/media-organize/test-tmdb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+        credentials: "include",
+      })
+      if (!res.ok || !res.body) {
+        const text = await res.text()
+        toast.error(text || "TMDB 测试失败")
+        setTesting(false)
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ""
+      let lastMsg = ""
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split("\n")
+        buf = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue
+          try {
+            const ev = JSON.parse(line.slice(6))
+            const msg: string = ev.message || ""
+            if (msg) {
+              setTestLog((prev) => [...prev, msg])
+              lastMsg = msg
+            }
+            if (ev.step === "done") {
+              if (ev.ok) toast.success(msg)
+              else toast.error(msg)
+              onMessage(msg)
+            }
+          } catch {}
+        }
+      }
+      if (lastMsg) onMessage(lastMsg)
     } catch (err) {
       const text = getMessage(err, "TMDB 测试失败")
-      onMessage(text)
       toast.error(text)
+      onMessage(text)
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -660,14 +703,25 @@ function MediaSettings({ settings, onMessage, onReload }: { settings: Record<str
       <CardContent className="grid gap-4 md:grid-cols-2">
         <TextField label="TMDB API Key" type="password" value={String(form.tmdb_api_key || "")} onChange={(value) => setForm((prev) => ({ ...prev, tmdb_api_key: value }))} />
         <TextField label="TMDB 语言" value={String(form.tmdb_language || "zh-CN")} onChange={(value) => setForm((prev) => ({ ...prev, tmdb_language: value }))} />
+        <div className="md:col-span-2">
+          <TextField label="TMDB API 地址" value={String(form.tmdb_base_url || "")} onChange={(value) => setForm((prev) => ({ ...prev, tmdb_base_url: value }))} placeholder="留空使用官方地址（https://api.themoviedb.org）" />
+        </div>
         <SwitchField label="启用代理" checked={Boolean(form.proxy_enabled)} onChange={(value) => setForm((prev) => ({ ...prev, proxy_enabled: value }))} />
         <TextField label="代理地址" value={String(form.proxy_url || "")} onChange={(value) => setForm((prev) => ({ ...prev, proxy_url: value }))} placeholder="http://127.0.0.1:7890" />
         <NumberField label="TMDB 请求间隔（毫秒）" value={Number(form.tmdb_request_interval_ms || 1000)} min={0} max={60000} onChange={(value) => setForm((prev) => ({ ...prev, tmdb_request_interval_ms: value }))} />
         <NumberField label="FFprobe 并发" value={Number(form.ffprobe_concurrency || 1)} min={1} max={8} onChange={(value) => setForm((prev) => ({ ...prev, ffprobe_concurrency: value }))} />
         <div className="flex gap-2 md:col-span-2">
           <Button onClick={save} disabled={saving}><Save className="size-4" />保存媒体设置</Button>
-          <Button variant="outline" onClick={testTmdb}>测试 TMDB</Button>
+          <Button variant="outline" onClick={testTmdb} disabled={testing}>
+            {testing ? <RefreshCw className="size-4 animate-spin" /> : null}
+            {testing ? "测试中…" : "测试 TMDB"}
+          </Button>
         </div>
+        {testLog.length > 0 && (
+          <div className="md:col-span-2 rounded-md border bg-muted px-3 py-2 text-sm space-y-0.5">
+            {testLog.map((line, i) => <div key={i}>{line}</div>)}
+          </div>
+        )}
       </CardContent>
     </Card>
   )

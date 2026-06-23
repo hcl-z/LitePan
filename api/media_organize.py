@@ -1,8 +1,10 @@
+import asyncio
 import json
 from datetime import datetime
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.deps import require_admin_auth
@@ -38,6 +40,7 @@ _MO_SETTING_KEYS = {
     "mo_proxy_username": "proxy_username",
     "mo_proxy_password": "proxy_password",
     "mo_tmdb_api_key": "tmdb_api_key",
+    "mo_tmdb_base_url": "tmdb_base_url",
     "mo_tmdb_language": "tmdb_language",
     "mo_api_request_interval_ms": "api_request_interval_ms",
     "mo_ffprobe_request_interval_ms": "ffprobe_request_interval_ms",
@@ -157,6 +160,7 @@ class SettingsUpdate(BaseModel):
     proxy_username: Optional[str] = None
     proxy_password: Optional[str] = None
     tmdb_api_key: Optional[str] = None
+    tmdb_base_url: Optional[str] = None
     tmdb_language: Optional[str] = None
     ffprobe_concurrency: Optional[int] = None
     ffprobe_timeout_seconds: Optional[int] = None
@@ -402,6 +406,7 @@ async def guess_file(account_id: str, file_id: str, session_data: dict = Depends
 
 class TmdbTestPayload(BaseModel):
     tmdb_api_key: Optional[str] = None
+    tmdb_base_url: Optional[str] = None
     tmdb_language: Optional[str] = None
     proxy_enabled: Optional[bool] = None
     proxy_url: Optional[str] = None
@@ -421,18 +426,37 @@ async def test_tmdb_connection(
     if not api_key:
         return error_response(message="请先填写 TMDB API Key 再测试")
     language = merged.get("tmdb_language") or "zh-CN"
+    base_url = (merged.get("tmdb_base_url") or "").strip()
     proxy_url = build_proxy_url(merged)
-    try:
-        from mediaorganize import validate_tmdb_connection
-        ok = await validate_tmdb_connection(api_key, language, proxy_url)
-        if ok:
-            return success_response(
-                data={"ok": True, "language": language, "proxy_used": bool(proxy_url)},
-                message="TMDB 连通正常（测试用的是当前编辑值，未保存）",
-            )
-        return error_response(message="TMDB 不可达，请检查 API Key、网络或代理配置")
-    except Exception as e:
-        return error_response(message=f"TMDB 连通测试异常: {e}")
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        def _sse(data: dict) -> str:
+            return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _sse({"step": "start", "message": "开始测试 TMDB 连通性…"})
+        await asyncio.sleep(0)
+
+        if base_url:
+            yield _sse({"step": "info", "message": f"使用自定义 API 地址：{base_url}"})
+        if proxy_url:
+            yield _sse({"step": "info", "message": f"使用代理：{proxy_url}"})
+        yield _sse({"step": "info", "message": f"请求语言：{language}"})
+        await asyncio.sleep(0)
+
+        yield _sse({"step": "connecting", "message": "正在连接 TMDB…"})
+        await asyncio.sleep(0)
+
+        try:
+            from mediaorganize import validate_tmdb_connection
+            ok, err = await validate_tmdb_connection(api_key, language, proxy_url, base_url)
+            if ok:
+                yield _sse({"step": "done", "ok": True, "message": "TMDB 连通正常 ✓（测试用的是当前编辑值，未保存）"})
+            else:
+                yield _sse({"step": "done", "ok": False, "message": f"TMDB 不可达: {err}"})
+        except Exception as e:
+            yield _sse({"step": "done", "ok": False, "message": f"TMDB 连通测试异常: {e}"})
+
+    return StreamingResponse(_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/search-tmdb")
@@ -445,8 +469,9 @@ async def search_tmdb_api(
 ):
     settings = await _get_organize_settings_dict()
     api_key = settings.get("tmdb_api_key") or ""
+    base_url = (settings.get("tmdb_base_url") or "").strip()
     proxy_url = build_proxy_url(settings)
-    results = await search_tmdb_async(query, year, language, api_key, proxy_url, media_type)
+    results = await search_tmdb_async(query, year, language, api_key, proxy_url, media_type, base_url)
     return success_response(data=results, message="搜索完成")
 
 
