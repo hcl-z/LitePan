@@ -126,7 +126,9 @@ from api.strm_admin import router as strm_admin_router
 from api.emby_proxy import admin_router as emby_proxy_admin_router, proxy_router as emby_proxy_router
 from api.plugins import router as plugins_router
 from api.notifications import router as notifications_router
-from api.media_organize import router as media_organize_router
+from api.mo_tasks import router as mo_tasks_router
+from api.mo_run import router as mo_run_router
+from api.mo_settings import router as mo_settings_router
 from api.local_fs import router as local_fs_router, admin_router as local_fs_admin_router
 from api.cross_transfer import router as cross_transfer_router
 
@@ -141,7 +143,9 @@ app.include_router(cache_retention_router)
 app.include_router(strm_router, prefix="/api/strm", tags=["STRM"])
 app.include_router(strm_admin_router, prefix="/api/admin/strm", tags=["STRM管理"])
 app.include_router(emby_proxy_admin_router, prefix="/api/admin/strm", tags=["Emby反代管理"])
-app.include_router(media_organize_router, prefix="/api/admin/media-organize", tags=["媒体整理"])
+app.include_router(mo_tasks_router,    prefix="/api/admin/media-organize", tags=["媒体整理"])
+app.include_router(mo_run_router,      prefix="/api/admin/media-organize", tags=["媒体整理"])
+app.include_router(mo_settings_router, prefix="/api/admin/media-organize", tags=["媒体整理"])
 app.include_router(emby_proxy_router, prefix="/emby-proxy", tags=["Emby反代"])
 app.include_router(plugins_router)
 app.include_router(local_fs_router)
