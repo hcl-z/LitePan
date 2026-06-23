@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react"
 import { Navigate, useSearchParams } from "react-router-dom"
-import { ArrowLeftRight, Bell, Database, Files, HardDrive, LayoutDashboard, Menu, Puzzle, Settings, Video } from "lucide-react"
+import { ArrowLeftRight, Bell, Database, Files, Film, HardDrive, LayoutDashboard, Menu, Puzzle, Server, Settings, Video } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { AccountsPanel } from "@/components/admin/AccountsPanel"
 import { AdminDashboard } from "@/components/admin/AdminDashboard"
 import { CachePanel } from "@/components/admin/CachePanel"
 import { CrossTransferPanel } from "@/components/admin/CrossTransferPanel"
+import { EmbyPanel } from "@/components/admin/EmbyPanel"
 import { LogsPanel } from "@/components/admin/LogsPanel"
-import { MediaPanel } from "@/components/admin/MediaPanel"
+import { MediaOrganizePanel } from "@/components/admin/MediaOrganizePanel"
 import { PluginsPanel } from "@/components/admin/PluginsPanel"
+import { StrmPanel } from "@/components/admin/StrmPanel"
 import { SettingsPanel } from "@/components/admin/SettingsPanel"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -23,7 +25,9 @@ const navItems = [
   { id: "accounts", label: "存储管理", icon: HardDrive },
   { id: "settings", label: "系统设置", icon: Settings },
   { id: "cache", label: "缓存管理", icon: Database },
-  { id: "media", label: "媒体管理", icon: Video },
+  { id: "strm",  label: "STRM 管理",  icon: Video   },
+  { id: "media", label: "媒体整理",   icon: Film    },
+  { id: "emby",  label: "Emby 代理",  icon: Server  },
   { id: "cross-transfer", label: "跨盘秒传", icon: ArrowLeftRight },
   { id: "logs", label: "系统日志", icon: Files },
   { id: "plugins", label: "插件中心", icon: Puzzle },
@@ -140,8 +144,12 @@ function renderPanel(page: string, navigate: (page: string) => void, setTheme: (
       return <SettingsPanel onThemeChange={setTheme} />
     case "cache":
       return <CachePanel />
+    case "strm":
+      return <StrmPanel />
     case "media":
-      return <MediaPanel />
+      return <MediaOrganizePanel />
+    case "emby":
+      return <EmbyPanel />
     case "cross-transfer":
       return <CrossTransferPanel />
     case "logs":
