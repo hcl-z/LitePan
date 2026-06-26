@@ -35,6 +35,7 @@ export function App() {
           <Route path="/" element={<IndexPage theme={theme} onThemeChange={setTheme} />} />
           <Route path="/login" element={<LoginPage theme={theme} />} />
           <Route path="/admin" element={<AdminPage theme={theme} onThemeChange={setTheme} />} />
+          <Route path="/admin/:page" element={<AdminPage theme={theme} onThemeChange={setTheme} />} />
         </Routes>
       </BrowserRouter>
       <Toaster richColors closeButton position="top-right" />

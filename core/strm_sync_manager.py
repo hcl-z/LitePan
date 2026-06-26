@@ -79,6 +79,7 @@ class StrmSyncManager:
         self._manual_triggered_tasks: Set[int] = set()
         self._pending_run_modes: Dict[int, str] = {}
         self._running_account_ids: Set[int] = set()
+        self._start_block_reasons: Dict[int, str] = {}
         self._task_concurrency_limit = 3
         self._scheduler_task: Optional[asyncio.Task] = None
         self._running_task_futures: Dict[int, asyncio.Task] = {}
@@ -431,20 +432,102 @@ class StrmSyncManager:
         except (ValueError, AttributeError):
             return True
 
-    def _can_start_task(self, task: Optional[StrmSyncTask]) -> bool:
+    def _get_start_block_reason(self, task: Optional[StrmSyncTask]) -> str:
         if not task:
-            return False
+            return "任务不存在"
         if len(self._running_tasks) >= self._task_concurrency_limit:
-            return False
+            return f"STRM并发已满 {len(self._running_tasks)}/{self._task_concurrency_limit}"
         if task.account_id in self._running_account_ids:
-            return False
+            return f"账号 {task.account_id} 已有 STRM 任务执行中"
         try:
             from core.cache_retention_manager import cache_retention_manager
             if task.account_id in cache_retention_manager.get_running_account_ids():
-                return False
+                return f"账号 {task.account_id} 正在执行缓存保持"
         except Exception:
             pass
-        return True
+        return ""
+
+    def _can_start_task(self, task: Optional[StrmSyncTask]) -> bool:
+        return not self._get_start_block_reason(task)
+
+    async def wait_for_task(self, task_id: int, timeout_seconds: Optional[int] = None) -> Dict[str, Any]:
+        task = self._tasks.get(task_id)
+        if not task:
+            return {"task_id": task_id, "runtime_state": "missing"}
+
+        deadline = None
+        if timeout_seconds and timeout_seconds > 0:
+            deadline = time.monotonic() + float(timeout_seconds)
+
+        warned = False
+        while self._is_running:
+            if task_id not in self._running_tasks and task_id not in self._queued_tasks and task_id not in self._manual_triggered_tasks:
+                break
+
+            future = self._running_task_futures.get(task_id)
+            if future and not future.done():
+                remaining = None
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(f"等待 STRM 任务超时: task={task_id}")
+                if self._logger:
+                    self._logger.info(
+                        f"STRM任务等待完成: task={task_id} name={task.name} running={task_id in self._running_tasks} queued={task_id in self._queued_tasks}"
+                    )
+                await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
+                break
+
+            if not warned and self._logger:
+                reason = self._get_start_block_reason(task)
+                if task_id in self._queued_tasks:
+                    self._logger.info(
+                        f"STRM任务等待排队: task={task.id} name={task.name} reason={reason or '等待可执行资源'}"
+                    )
+                    warned = True
+
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"等待 STRM 任务超时: task={task_id}")
+            await asyncio.sleep(1)
+
+        updated = await db.get_strm_sync_task(task_id)
+        if not updated:
+            return {"task_id": task_id, "runtime_state": "missing"}
+
+        if task_id in self._queued_tasks:
+            runtime_state = "queued"
+        elif task_id in self._running_tasks:
+            runtime_state = "running"
+        elif str(updated.get("last_scan_status") or "") == "success":
+            runtime_state = "success"
+        elif str(updated.get("last_scan_status") or "") == "error":
+            runtime_state = "error"
+        elif str(updated.get("status") or "") == "paused":
+            runtime_state = "paused"
+        else:
+            runtime_state = str(updated.get("status") or "unknown")
+
+        return {
+            "task_id": task_id,
+            "runtime_state": runtime_state,
+            "status": updated.get("status"),
+            "last_scan_status": updated.get("last_scan_status"),
+            "last_created_count": int(updated.get("last_created_count") or 0),
+            "last_updated_count": int(updated.get("last_updated_count") or 0),
+            "last_deleted_count": int(updated.get("last_deleted_count") or 0),
+            "last_duration_ms": int(updated.get("last_duration_ms") or 0),
+            "error_message": updated.get("error_message"),
+        }
+
+    def _log_start_blocked_once(self, task: StrmSyncTask, reason: str) -> None:
+        previous = self._start_block_reasons.get(task.id)
+        if previous == reason:
+            return
+        self._start_block_reasons[task.id] = reason
+        if self._logger:
+            self._logger.info(
+                f"STRM任务等待执行: task={task.id} name={task.name} reason={reason} queued={len(self._queued_tasks)} running={len(self._running_tasks)}"
+            )
 
     def _start_task_if_possible(self, task_id: int) -> bool:
         task = self._tasks.get(task_id)
@@ -456,14 +539,21 @@ class StrmSyncManager:
         if task_id in self._running_tasks:
             self._queued_tasks.discard(task_id)
             return True
-        if not self._can_start_task(task):
+        block_reason = self._get_start_block_reason(task)
+        if block_reason:
             self._queued_tasks.add(task_id)
+            self._log_start_blocked_once(task, block_reason)
             return False
         self._queued_tasks.discard(task_id)
+        self._start_block_reasons.pop(task_id, None)
         self._manual_triggered_tasks.discard(task_id)
         run_mode = self._pending_run_modes.pop(task_id, "auto")
         self._running_tasks.add(task_id)
         self._running_account_ids.add(task.account_id)
+        if self._logger:
+            self._logger.info(
+                f"STRM任务开始执行: task={task.id} name={task.name} mode={run_mode} account={task.account_id}"
+            )
         future = asyncio.create_task(self._run_task(task_id, run_mode=run_mode))
         self._running_task_futures[task_id] = future
         return True
@@ -471,20 +561,31 @@ class StrmSyncManager:
     async def run_task_now(self, task_id: int, run_mode: str = "auto") -> str:
         task = self._tasks.get(task_id)
         if not task:
+            if self._logger:
+                self._logger.warning(f"STRM手动触发失败: task={task_id} 不存在")
             return "missing"
         if run_mode not in {"auto", "full", "branch"}:
             run_mode = "auto"
         task.next_run_time = datetime.now()
         if task_id in self._running_tasks:
             self._queued_tasks.discard(task_id)
+            if self._logger:
+                self._logger.info(f"STRM手动触发跳过: task={task_id} name={task.name} 已在执行中")
             return "already_running"
         self._pending_run_modes[task_id] = run_mode
         if task_id in self._queued_tasks:
+            if self._logger:
+                self._logger.info(f"STRM手动触发跳过: task={task_id} name={task.name} 已在队列中 mode={run_mode}")
             return "already_queued"
         self._manual_triggered_tasks.add(task_id)
         if self._start_task_if_possible(task_id):
+            if self._logger:
+                self._logger.info(f"STRM手动触发成功: task={task_id} name={task.name} mode={run_mode}")
             return "running"
         self._queued_tasks.add(task_id)
+        if self._logger:
+            reason = self._get_start_block_reason(task) or "等待调度"
+            self._logger.info(f"STRM手动触发已排队: task={task_id} name={task.name} mode={run_mode} reason={reason}")
         return "queued"
 
     async def force_stop_task(self, task_id: int) -> bool:
@@ -2066,6 +2167,15 @@ class StrmSyncManager:
             task = self._tasks.get(task_id)
             if task:
                 self._running_account_ids.discard(task.account_id)
+                self._start_block_reasons.pop(task_id, None)
+                if self._logger:
+                    self._logger.info(
+                        f"STRM任务结束: task={task.id} name={task.name} status={task.last_scan_status or '-'} "
+                        f"created={task.last_created_count} updated={task.last_updated_count} deleted={task.last_deleted_count} "
+                        f"duration_ms={task.last_duration_ms} next_run={task.next_run_time.isoformat() if task.next_run_time else '-'}"
+                    )
+            elif self._logger:
+                self._logger.info(f"STRM任务结束: task={task_id} 已不在内存任务表中")
 
     def _parse_strm_play_url(self, value: str) -> Optional[Dict[str, Any]]:
         text = str(value or "").strip()

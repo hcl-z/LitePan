@@ -148,6 +148,32 @@ class AsyncDatabase:
                     updated_at      TEXT NOT NULL
                 );
 
+                -- 可配置入库流程
+                CREATE TABLE IF NOT EXISTS ingest_workflows (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name             TEXT NOT NULL UNIQUE,
+                    enabled          BOOLEAN DEFAULT TRUE,
+                    trigger_type     TEXT DEFAULT 'manual',
+                    trigger_config   TEXT DEFAULT '{}',
+                    steps            TEXT NOT NULL,
+                    debounce_seconds INTEGER DEFAULT 0,
+                    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                -- 入库流程运行历史
+                CREATE TABLE IF NOT EXISTS ingest_runs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_id   INTEGER,
+                    source        TEXT DEFAULT 'manual',
+                    status        TEXT DEFAULT 'running',
+                    started_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    finished_at   TIMESTAMP,
+                    summary       TEXT DEFAULT '{}',
+                    error_message TEXT,
+                    FOREIGN KEY (workflow_id) REFERENCES ingest_workflows(id)
+                );
+
             """)
             await self._conn.commit()
 
@@ -870,6 +896,155 @@ class AsyncDatabase:
             )
             await self._conn.commit()
             return cursor.rowcount
+
+    async def get_ingest_workflows(self, include_disabled: bool = True) -> List[Dict]:
+        if include_disabled:
+            query = "SELECT * FROM ingest_workflows ORDER BY id DESC"
+            params = ()
+        else:
+            query = "SELECT * FROM ingest_workflows WHERE enabled = 1 ORDER BY id DESC"
+            params = ()
+        async with self._conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+        return [self._decode_ingest_workflow_row(dict(row)) for row in rows]
+
+    async def get_ingest_workflow(self, workflow_id: int) -> Optional[Dict]:
+        async with self._conn.execute(
+            "SELECT * FROM ingest_workflows WHERE id = ?",
+            (workflow_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._decode_ingest_workflow_row(dict(row)) if row else None
+
+    async def get_ingest_workflow_by_name(self, name: str) -> Optional[Dict]:
+        async with self._conn.execute(
+            "SELECT * FROM ingest_workflows WHERE name = ?",
+            (name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._decode_ingest_workflow_row(dict(row)) if row else None
+
+    async def create_ingest_workflow(
+        self,
+        name: str,
+        steps: List[Dict],
+        enabled: bool = True,
+        trigger_type: str = "manual",
+        trigger_config: Optional[Dict] = None,
+        debounce_seconds: int = 0,
+    ) -> int:
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                INSERT INTO ingest_workflows
+                (name, enabled, trigger_type, trigger_config, steps, debounce_seconds, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    name,
+                    1 if enabled else 0,
+                    trigger_type,
+                    json.dumps(trigger_config or {}, ensure_ascii=False),
+                    json.dumps(steps or [], ensure_ascii=False),
+                    max(0, int(debounce_seconds or 0)),
+                ),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+
+    async def update_ingest_workflow(self, workflow_id: int, **kwargs) -> bool:
+        allowed = {"name", "enabled", "trigger_type", "trigger_config", "steps", "debounce_seconds"}
+        updates = {}
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in {"trigger_config", "steps"}:
+                updates[key] = json.dumps(value or ({} if key == "trigger_config" else []), ensure_ascii=False)
+            elif key == "enabled":
+                updates[key] = 1 if bool(value) else 0
+            elif key == "debounce_seconds":
+                updates[key] = max(0, int(value or 0))
+            else:
+                updates[key] = value
+        if not updates:
+            return False
+        fields = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [workflow_id]
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(
+                f"UPDATE ingest_workflows SET {fields}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                tuple(values),
+            )
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def delete_ingest_workflow(self, workflow_id: int) -> bool:
+        async with self._conn.cursor() as cursor:
+            await cursor.execute("DELETE FROM ingest_workflows WHERE id = ?", (workflow_id,))
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def create_ingest_run(self, workflow_id: Optional[int], source: str = "manual") -> int:
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                INSERT INTO ingest_runs (workflow_id, source, status, started_at)
+                VALUES (?, ?, 'running', CURRENT_TIMESTAMP)
+                """,
+                (workflow_id, source),
+            )
+            await self._conn.commit()
+            return cursor.lastrowid
+
+    async def update_ingest_run(self, run_id: int, **kwargs) -> bool:
+        allowed = {"status", "summary", "error_message", "finished_at"}
+        updates = {}
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key == "summary":
+                updates[key] = json.dumps(value or {}, ensure_ascii=False)
+            else:
+                updates[key] = value
+        if not updates:
+            return False
+        fields = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [run_id]
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(
+                f"UPDATE ingest_runs SET {fields} WHERE id = ?",
+                tuple(values),
+            )
+            await self._conn.commit()
+            return cursor.rowcount > 0
+
+    async def get_ingest_runs(self, workflow_id: Optional[int] = None, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit or 50), 200))
+        if workflow_id is None:
+            query = "SELECT * FROM ingest_runs ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+        else:
+            query = "SELECT * FROM ingest_runs WHERE workflow_id = ? ORDER BY id DESC LIMIT ?"
+            params = (workflow_id, limit)
+        async with self._conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+        return [self._decode_ingest_run_row(dict(row)) for row in rows]
+
+    def _decode_ingest_workflow_row(self, row: Dict) -> Dict:
+        for key, fallback in (("trigger_config", {}), ("steps", [])):
+            try:
+                row[key] = json.loads(row.get(key) or json.dumps(fallback))
+            except Exception:
+                row[key] = fallback
+        row["enabled"] = bool(row.get("enabled"))
+        return row
+
+    def _decode_ingest_run_row(self, row: Dict) -> Dict:
+        try:
+            row["summary"] = json.loads(row.get("summary") or "{}")
+        except Exception:
+            row["summary"] = {}
+        return row
 
 DATABASE_DIR = Path("data")
 DATABASE_FILE = DATABASE_DIR / "litepan.db"

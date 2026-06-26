@@ -396,7 +396,7 @@ class FeishuBotService:
             f"飞书机器人命令: chat={ctx.chat_id or '-'} user={ctx.user_id or ctx.open_id or '-'} command={command}"
         )
         try:
-            message = await self._execute_command(command)
+            message = await self._execute_command(command, ctx=ctx)
         except Exception as e:
             self._logger.error(f"飞书机器人命令执行失败: {e}")
             message = f"执行失败：{_truncate_error(e)}"
@@ -407,7 +407,7 @@ class FeishuBotService:
             f"飞书卡片命令: chat={ctx.chat_id or '-'} user={ctx.user_id or ctx.open_id or '-'} command={command}"
         )
         try:
-            response = await self._execute_command(command)
+            response = await self._execute_command(command, ctx=ctx)
         except Exception as e:
             self._logger.error(f"飞书卡片命令执行失败: {e}")
             response = f"执行失败：{_truncate_error(e)}"
@@ -434,7 +434,11 @@ class FeishuBotService:
             or (ctx.open_id and ctx.open_id in self._allowed_user_ids)
         )
 
-    async def _execute_command(self, command: str) -> Union[str, FeishuBotResponse]:
+    async def _execute_command(
+        self,
+        command: str,
+        ctx: Optional[FeishuMessageContext] = None,
+    ) -> Union[str, FeishuBotResponse]:
         parts = command.strip().split()
         if not parts or parts[0].lower() in {"help", "帮助", "菜单", "menu"}:
             return FeishuBotResponse(text=self._help_text(), card=self._build_help_card())
@@ -446,7 +450,7 @@ class FeishuBotService:
         if action in {"refresh", "刷新"}:
             return await self._handle_refresh(parts[1:])
         if action in {"入库", "ingest"}:
-            return await self._handle_ingest(parts[1:])
+            return await self._handle_ingest(parts[1:], ctx=ctx)
         if action in {"cache", "缓存", "缓存保持"}:
             return await self._handle_cache(parts[1:])
         if action in {"strm", "流", "流生成"}:
@@ -489,13 +493,31 @@ class FeishuBotService:
             return "\n".join(lines)
         return f"用法：{self._prefix} 刷新 <account_id|all>"
 
-    async def _handle_ingest(self, args: Sequence[str]) -> str:
+    async def _handle_ingest(
+        self,
+        args: Sequence[str],
+        ctx: Optional[FeishuMessageContext] = None,
+    ) -> str:
+        if not args:
+            return await self._ingest_workflows_text()
+        if len(args) >= 1 and args[0].lower() in {"list", "列表", "flows", "workflows", "流程"}:
+            return await self._ingest_workflows_text()
+        if len(args) >= 2 and args[0].lower() in {"workflow", "flow", "流程"}:
+            return await self._run_ingest_workflow(" ".join(args[1:]), ctx=ctx)
         if len(args) == 1:
+            workflow = await self._find_ingest_workflow(args[0])
+            if workflow:
+                if not bool(workflow.get("enabled")):
+                    return f"入库流程未启用：{workflow.get('name')}"
+                await self._push_ingest_triggered_message(ctx, workflow)
+                return self._format_ingest_workflow_result(
+                    await self._run_ingest_workflow_row(workflow, source="feishu")
+                )
             target = args[0].lower()
         elif len(args) == 2 and args[0].lower() == "account":
             target = args[1].lower()
         else:
-            return f"用法：{self._prefix} 入库 <account_id|all>"
+            return f"用法：{self._prefix} 入库 <流程ID|流程名> 或 {self._prefix} 入库 account <account_id|all>；不带流程名称会列出全部流程。"
 
         if target == "all":
             accounts = await db.list_accounts(include_inactive=False)
@@ -509,8 +531,77 @@ class FeishuBotService:
         try:
             account_id = int(target)
         except ValueError:
-            return f"account_id 必须是数字。用法：{self._prefix} 入库 <account_id|all>"
+            return f"未找到入库流程，account_id 也不是数字。用法：{self._prefix} 入库 <流程ID|流程名> 或 {self._prefix} 入库 account <account_id|all>；不带流程名称会列出全部流程。"
         return self._format_ingest_account_result(await self._ingest_account(account_id))
+
+    async def _run_default_ingest_workflow(self) -> str:
+        workflows = await db.get_ingest_workflows(include_disabled=True)
+        if workflows:
+            lines = ["入库流程："]
+            for workflow in workflows[:10]:
+                enabled = "启用" if workflow.get("enabled") else "停用"
+                lines.append(f"- #{workflow.get('id')} {workflow.get('name')}（{enabled}）")
+            if len(workflows) > 10:
+                lines.append(f"... 其余 {len(workflows) - 10} 个流程已省略")
+            lines.append(f"用法：{self._prefix} 入库 <流程ID|流程名>")
+            return "\n".join(lines)
+        return f"暂无入库流程。仍可使用旧命令：{self._prefix} 入库 account <account_id|all>"
+
+    async def _run_ingest_workflow(
+        self,
+        target: str,
+        ctx: Optional[FeishuMessageContext] = None,
+    ) -> str:
+        workflow = await self._find_ingest_workflow(target)
+        if not workflow:
+            return f"未找到入库流程：{target}"
+        if not bool(workflow.get("enabled")):
+            return f"入库流程未启用：{workflow.get('name')}"
+        await self._push_ingest_triggered_message(ctx, workflow)
+        return self._format_ingest_workflow_result(
+            await self._run_ingest_workflow_row(workflow, source="feishu")
+        )
+
+    async def _run_ingest_workflow_row(self, workflow: Dict[str, Any], source: str) -> Dict[str, Any]:
+        from core.ingest_pipeline import ingest_pipeline_runner
+
+        self._logger.info(f"飞书触发入库流程: id={workflow.get('id')} name={workflow.get('name')}")
+        return await ingest_pipeline_runner.run_workflow_config(workflow, source=source)
+
+    async def _push_ingest_triggered_message(
+        self,
+        ctx: Optional[FeishuMessageContext],
+        workflow: Dict[str, Any],
+    ) -> None:
+        if not ctx or not ctx.chat_id:
+            return
+        workflow_id = workflow.get("id")
+        workflow_name = workflow.get("name") or f"流程{workflow_id or ''}"
+        await self._reply(
+            ctx.chat_id,
+            f"已触发入库流程「{workflow_name}」（#{workflow_id}），执行完成后会继续推送结果。",
+        )
+
+    async def _find_ingest_workflow(self, target: str) -> Optional[Dict[str, Any]]:
+        value = str(target or "").strip()
+        if not value:
+            return None
+        if value.isdigit():
+            workflow = await db.get_ingest_workflow(int(value))
+            if workflow:
+                return workflow
+        return await db.get_ingest_workflow_by_name(value)
+
+    async def _ingest_workflows_text(self) -> str:
+        workflows = await db.get_ingest_workflows(include_disabled=True)
+        if not workflows:
+            return "暂无入库流程。"
+        lines = ["入库流程："]
+        for workflow in workflows:
+            enabled = "启用" if workflow.get("enabled") else "停用"
+            step_count = len(workflow.get("steps") or [])
+            lines.append(f"- #{workflow.get('id')} {workflow.get('name')}（{enabled}，{step_count} 步）")
+        return "\n".join(lines)
 
     async def _ingest_account(self, account_id: int) -> Dict[str, Any]:
         refresh_result = await self._refresh_service.refresh_account_content(account_id)
@@ -772,7 +863,7 @@ class FeishuBotService:
                         "tag": "action",
                         "actions": [
                             self._card_button("刷新", "primary", f"refresh account {account_id}"),
-                            self._card_button("入库", "default", f"入库 {account_id}"),
+                            self._card_button("入库", "default", f"入库 account {account_id}"),
                         ],
                     },
                     {"tag": "hr"},
@@ -971,7 +1062,7 @@ class FeishuBotService:
             ("STRM", f"{self._prefix} strm", "卡片展示 STRM 任务，并提供自动/全量/分支触发按钮。"),
             ("整理", f"{self._prefix} 整理", "卡片展示媒体整理任务，并提供执行按钮。"),
             ("刷新", f"{self._prefix} 刷新 <account_id|all>", "只刷新网盘目录缓存，不自动生成 STRM。"),
-            ("入库", f"{self._prefix} 入库 <account_id|all>", "先刷新网盘，再触发该账号 STRM 生成。"),
+            ("入库流程", f"{self._prefix} 入库", "不带流程名称列出全部流程；指定流程 ID 或名称后执行。"),
             ("状态", f"{self._prefix} 状态", "查看缓存保持、STRM、媒体整理运行状态。"),
         ]
         elements: List[Dict[str, Any]] = []
@@ -1135,6 +1226,50 @@ class FeishuBotService:
             lines.append(f"... 其余 {len(results) - 8} 个账号已省略")
         return "\n".join(lines)
 
+    def _format_ingest_workflow_result(self, result: Dict[str, Any]) -> str:
+        workflow_name = result.get("workflow_name") or f"流程{result.get('workflow_id') or ''}"
+        status = str(result.get("status") or "unknown")
+        run_id = result.get("run_id")
+        if status == "skipped":
+            return f"入库流程 {workflow_name} 已跳过：{result.get('reason') or '防抖限制'}"
+
+        lines = [f"入库流程 {workflow_name} 执行完成：{self._format_workflow_status(status)}（run #{run_id}）"]
+        for step in result.get("steps") or []:
+            step_type = step.get("type") or "-"
+            name = step.get("name") or step_type
+            step_status = self._format_workflow_status(str(step.get("status") or "unknown"))
+            data = step.get("data") or {}
+            detail = self._format_ingest_step_detail(step_type, data)
+            if step.get("error"):
+                detail = f"失败：{step.get('error')}"
+            lines.append(f"- {name}：{step_status}{('，' + detail) if detail else ''}")
+        return "\n".join(lines)
+
+    def _format_ingest_step_detail(self, step_type: str, data: Dict[str, Any]) -> str:
+        if step_type == "refresh":
+            return (
+                f"目录 {data.get('directory_count', 0)} 个，"
+                f"成功 {data.get('success_count', 0)}，失败 {data.get('failed_count', 0)}"
+            )
+        if step_type == "organize":
+            return f"整理任务 {data.get('task_count', 0)} 个"
+        if step_type == "strm":
+            tasks = data.get("tasks") or []
+            triggered = sum(1 for item in tasks if item.get("state") != "missing")
+            return f"STRM {triggered}/{len(tasks)} 个，模式 {data.get('run_mode') or 'auto'}"
+        if step_type == "notify":
+            return "已通知" if data.get("notified") else ""
+        return ""
+
+    def _format_workflow_status(self, status: str) -> str:
+        return {
+            "success": "成功",
+            "failed": "失败",
+            "skipped": "跳过",
+            "running": "运行中",
+            "unknown": "未知",
+        }.get(status, status)
+
     def _format_task_state(self, state: str) -> str:
         return {
             "running": "已开始",
@@ -1149,7 +1284,9 @@ class FeishuBotService:
             "LitePan 飞书命令：\n"
             f"- {self._prefix} 账号\n"
             f"- {self._prefix} 刷新 <account_id|all>\n"
-            f"- {self._prefix} 入库 <account_id|all>\n"
+            f"- {self._prefix} 入库\n"
+            f"- {self._prefix} 入库 <流程ID|流程名>\n"
+            f"- {self._prefix} 入库 account <account_id|all>\n"
             f"- {self._prefix} 状态\n"
             f"- {self._prefix} cache run <config_id|all>\n"
             f"- {self._prefix} strm run <task_id|all> [auto|full|branch]\n"

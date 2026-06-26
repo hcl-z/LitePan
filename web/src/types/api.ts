@@ -220,6 +220,39 @@ export interface MediaOrganizeTask {
   updated_at?: string
 }
 
+export interface IngestStep {
+  type: "refresh" | "organize" | "strm" | "notify" | string
+  name?: string
+  order?: number
+  enabled?: boolean
+  on_error?: "stop" | "continue" | string
+  timeout_seconds?: number
+  params?: Record<string, unknown>
+}
+
+export interface IngestWorkflow {
+  id: number
+  name: string
+  enabled: boolean
+  trigger_type?: string
+  trigger_config?: Record<string, unknown>
+  steps: IngestStep[]
+  debounce_seconds?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface IngestRun {
+  id: number
+  workflow_id?: number | null
+  source?: string
+  status?: string
+  started_at?: string
+  finished_at?: string | null
+  summary?: Record<string, unknown>
+  error_message?: string | null
+}
+
 export interface EmbyProxy {
   id: number
   name?: string

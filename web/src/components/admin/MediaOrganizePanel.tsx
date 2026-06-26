@@ -37,6 +37,7 @@ const mediaDefaults = {
   use_ffprobe: false,
   use_tmdb: true,
   overwrite_existing: false,
+  delete_source_after_relocate: false,
   recursive: true,
 }
 
@@ -286,6 +287,7 @@ function MediaTaskDialog({ accounts, task, onSaved }: { accounts: Account[]; tas
       use_ffprobe: Boolean(config.use_ffprobe),
       use_tmdb: config.use_tmdb !== false,
       overwrite_existing: Boolean(config.overwrite_existing),
+      delete_source_after_relocate: Boolean(config.delete_source_after_relocate),
       recursive: config.recursive !== false,
     } : { ...mediaDefaults, account_id: accounts[0]?.id ? String(accounts[0].id) : "" })
   }, [task, accounts])
@@ -341,6 +343,9 @@ function MediaTaskDialog({ accounts, task, onSaved }: { accounts: Account[]; tas
         <SwitchField label="使用 TMDB" checked={form.use_tmdb} onChange={(value) => setForm((prev) => ({ ...prev, use_tmdb: value }))} />
         <SwitchField label="使用 FFprobe" checked={form.use_ffprobe} onChange={(value) => setForm((prev) => ({ ...prev, use_ffprobe: value }))} />
         <SwitchField label="覆盖已有文件" checked={form.overwrite_existing} onChange={(value) => setForm((prev) => ({ ...prev, overwrite_existing: value }))} />
+        {form.action_type === "rename" ? (
+          <SwitchField label="整理后删除源文件" checked={form.delete_source_after_relocate} onChange={(value) => setForm((prev) => ({ ...prev, delete_source_after_relocate: value }))} />
+        ) : null}
       </div>
       {message ? <div className="rounded-md border bg-muted px-3 py-2 text-sm">{message}</div> : null}
       <DialogFooter><Button onClick={save}>保存任务</Button></DialogFooter>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
-import { Navigate, useSearchParams } from "react-router-dom"
-import { ArrowLeftRight, Bell, Database, Files, Film, HardDrive, LayoutDashboard, Menu, Puzzle, Server, Settings, Video } from "lucide-react"
+import { Navigate, useParams, useSearchParams } from "react-router-dom"
+import { ArrowLeftRight, Bell, Database, Files, Film, HardDrive, LayoutDashboard, Menu, Puzzle, Server, Settings, Video, Workflow } from "lucide-react"
 import { AppShell } from "@/components/layout/AppShell"
 import { AccountsPanel } from "@/components/admin/AccountsPanel"
 import { AdminDashboard } from "@/components/admin/AdminDashboard"
@@ -9,6 +9,7 @@ import { CrossTransferPanel } from "@/components/admin/CrossTransferPanel"
 import { EmbyPanel } from "@/components/admin/EmbyPanel"
 import { LogsPanel } from "@/components/admin/LogsPanel"
 import { MediaOrganizePanel } from "@/components/admin/MediaOrganizePanel"
+import { IngestPanel } from "@/components/admin/IngestPanel"
 import { PluginsPanel } from "@/components/admin/PluginsPanel"
 import { StrmPanel } from "@/components/admin/StrmPanel"
 import { SettingsPanel } from "@/components/admin/SettingsPanel"
@@ -27,6 +28,7 @@ const navItems = [
   { id: "cache", label: "缓存管理", icon: Database },
   { id: "strm",  label: "STRM 管理",  icon: Video   },
   { id: "media", label: "媒体整理",   icon: Film    },
+  { id: "ingest", label: "入库流程", icon: Workflow },
   { id: "emby",  label: "Emby 代理",  icon: Server  },
   { id: "cross-transfer", label: "跨盘秒传", icon: ArrowLeftRight },
   { id: "logs", label: "系统日志", icon: Files },
@@ -40,9 +42,10 @@ interface AdminPageProps {
 
 export function AdminPage({ theme, onThemeChange }: AdminPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const routeParams = useParams()
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const page = searchParams.get("page") || "dashboard"
+  const page = routeParams.page || searchParams.get("page") || "dashboard"
 
   useEffect(() => {
     void authApi.status().then((response) => setAuth(response.data)).catch(() => setAuth({ is_admin: false }))
@@ -148,6 +151,8 @@ function renderPanel(page: string, navigate: (page: string) => void, setTheme: (
       return <StrmPanel />
     case "media":
       return <MediaOrganizePanel />
+    case "ingest":
+      return <IngestPanel />
     case "emby":
       return <EmbyPanel />
     case "cross-transfer":

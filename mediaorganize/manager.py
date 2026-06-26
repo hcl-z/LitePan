@@ -74,6 +74,24 @@ def is_running(task_id: str) -> bool:
     return bool(running and not running.done())
 
 
+async def wait_for_task(task_id: str) -> Dict[str, Any]:
+    running = _running_tasks.get(task_id)
+    current = asyncio.current_task()
+    if running and running is current:
+        raise Exception("不能等待当前媒体整理任务自身")
+    if running and not running.done():
+        await running
+
+    updated = await db.get_media_organize_task(task_id)
+    result = None
+    if updated and updated.get("last_run_result"):
+        try:
+            result = json.loads(updated.get("last_run_result") or "null")
+        except Exception:
+            result = None
+    return {"task_id": task_id, "submitted": False, "completed": True, "result": result}
+
+
 def update_progress(task_id: str, info: Dict[str, Any]) -> None:
     if not task_id:
         return
@@ -378,6 +396,56 @@ async def run_task(task_id: str) -> Dict[str, Any]:
     runner_task = asyncio.create_task(_runner())
     _running_tasks[task_id] = runner_task
     return {"task_id": task_id, "submitted": True}
+
+
+async def run_task_and_wait(task_id: str) -> Dict[str, Any]:
+    task = await db.get_media_organize_task(task_id)
+    if not task:
+        raise Exception("任务不存在")
+    if is_running(task_id):
+        raise Exception("任务正在执行中")
+
+    discard_stop(task_id)
+    clear_logs(task_id)
+    append_log(task_id, "[MediaOrganize] 任务已提交，开始生成计划")
+
+    current = asyncio.current_task()
+    if current:
+        _running_tasks[task_id] = current
+
+    try:
+        settings = await _load_settings_dict()
+        api_extra_delay = int(settings.get("api_request_interval_ms") or 300)
+        delay_token = _extra_api_delay.set(api_extra_delay)
+        try:
+            await db.update_media_organize_task(task_id, status="planning")
+            plan = await _build_plan_for_task(task_id, task, settings)
+            await _save_plan(task_id, plan)
+            append_log(task_id, f"[MediaOrganize] 计划已生成: {len(plan.actions)} 个动作, 跳过 {len(plan.skipped)} 个")
+            cfg = _load_task_config(task)
+            await _apply_plan_runner(task_id, plan, cfg)
+        except TaskAborted:
+            append_log(task_id, "[MediaOrganize] 任务已停止")
+            await db.update_media_organize_task(task_id, status="idle", last_run_at=_now())
+        except Exception as e:
+            append_log(task_id, f"[MediaOrganize] 任务异常: {e}")
+            await db.update_media_organize_task(task_id, status="idle", last_run_at=_now())
+            raise
+        finally:
+            _extra_api_delay.reset(delay_token)
+    finally:
+        discard_stop(task_id)
+        if _running_tasks.get(task_id) is current:
+            _running_tasks.pop(task_id, None)
+
+    updated = await db.get_media_organize_task(task_id)
+    result = None
+    if updated and updated.get("last_run_result"):
+        try:
+            result = json.loads(updated.get("last_run_result") or "null")
+        except Exception:
+            result = None
+    return {"task_id": task_id, "submitted": False, "completed": True, "result": result}
 
 
 async def get_plan(task_id: str) -> Optional[Dict[str, Any]]:

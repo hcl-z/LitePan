@@ -131,6 +131,7 @@ from api.mo_run import router as mo_run_router
 from api.mo_settings import router as mo_settings_router
 from api.local_fs import router as local_fs_router, admin_router as local_fs_admin_router
 from api.cross_transfer import router as cross_transfer_router
+from api.ingest import router as ingest_router
 
 app.include_router(admin_router, prefix="/api/admin", tags=["管理"])
 app.include_router(notifications_router, prefix="/api/admin", tags=["通知"])
@@ -151,6 +152,7 @@ app.include_router(plugins_router)
 app.include_router(local_fs_router)
 app.include_router(local_fs_admin_router)
 app.include_router(cross_transfer_router)
+app.include_router(ingest_router, prefix="/api/admin/ingest", tags=["入库流程"])
 
 @app.get("/")
 async def serve_frontend():

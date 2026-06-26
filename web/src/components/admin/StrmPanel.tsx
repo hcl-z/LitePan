@@ -150,7 +150,7 @@ function TaskTable({ tasks, onEdit, onBranches, onDelete, onAction }: { tasks: S
               <div className="text-xs text-muted-foreground">{task.path || "/"}，{scanModeText(task.scan_mode)}</div>
             </TableCell>
             <TableCell className="text-xs text-muted-foreground">{task.account_name || task.account_id}</TableCell>
-            <TableCell><StatusBadge status={task.is_scanning ? "running" : task.status || "unknown"} /></TableCell>
+            <TableCell><StatusBadge status={strmRuntimeStatus(task)} /></TableCell>
             <TableCell className="text-xs text-muted-foreground">
               目录 {task.scanned_dirs || 0}，文件 {task.scanned_files || 0}
               {task.branch_count ? <div>分支 {task.branch_count}</div> : null}
@@ -179,6 +179,12 @@ function TaskTable({ tasks, onEdit, onBranches, onDelete, onAction }: { tasks: S
       </TableBody>
     </Table>
   )
+}
+
+function strmRuntimeStatus(task: StrmTask) {
+  if (task.is_scanning) return "scanning"
+  if (task.is_queued) return "queued"
+  return task.status === "running" ? "enabled" : task.status || "unknown"
 }
 
 function StrmTaskDialog({ accounts, task, onSaved }: { accounts: Account[]; task: StrmTask | null; onSaved: (message: string) => void | Promise<void> }) {
